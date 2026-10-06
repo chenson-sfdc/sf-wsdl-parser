@@ -70,13 +70,6 @@ func BuildModel(def *Definitions) *Model {
 		}
 	}
 
-	elements := map[string]Element{}
-	for _, schema := range def.Types.Schemas {
-		for _, el := range schema.Elements {
-			elements[el.Name] = el
-		}
-	}
-
 	for name, ct := range complexTypes {
 		if ct.ComplexContent == nil || ct.ComplexContent.Extension == nil {
 			continue

@@ -136,6 +136,9 @@ func writeJSONReport(path string, model *wsdl.Model) error {
 	if err := report.WriteJSON(f, model); err != nil {
 		return fmt.Errorf("writing JSON output: %w", err)
 	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing JSON output file: %w", err)
+	}
 	fmt.Fprintf(os.Stdout, "\nJSON report written to %s\n", path)
 	return nil
 }
