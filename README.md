@@ -6,8 +6,15 @@ enumerated types, and SOAP operations it declares.
 ## Build
 
 ```bash
-go build -o wsdlparser ./cmd/wsdlparser
+./build.sh
 ```
+
+`build.sh` first creates the application directory
+`~/Documents/go-data-discovery/` with `data/` and `wsdl/` inside it, then
+builds `./wsdlparser`. If `~/Documents/go-data-discovery` already exists, the
+build halts with a message and changes nothing; move or remove the directory
+to build again. To build the binary only, without touching the application
+directory, run `go build -o wsdlparser ./cmd/wsdlparser`.
 
 ## Usage
 
@@ -24,11 +31,19 @@ interactively:
 ./wsdlparser
 ```
 
+With the application directory in place, a bare filename is looked up in
+`~/Documents/go-data-discovery/wsdl/`, and the file dialog opens there:
+
+```bash
+./wsdlparser execcosmos.wsdl
+```
+
 ### Flags
 
 - `-json <path>` — also write the full parsed model (every sObject's fields,
   every enum's values, every operation) as JSON to `<path>`. Use `-json -`
-  to write JSON to stdout instead of a file.
+  to write JSON to stdout instead of a file. A bare filename is written to
+  `~/Documents/go-data-discovery/data/`; a path with a directory is used as typed.
 
 Flags may appear before or after the WSDL path:
 
@@ -68,7 +83,22 @@ open visualizations/D3/index.html      # macOS; or just double-click the file
 
 Then drop in either the Enterprise `.wsdl` itself or the JSON written by
 `wsdlparser -json`. Everything is parsed locally in the browser; nothing is
-uploaded. See [DOCUMENTATION.md](DOCUMENTATION.md#enterprise-wsdl-explorer-spa)
+uploaded.
+
+### Embedded local web server
+
+The same app is embedded in the `wsdlparser` binary:
+
+```bash
+./wsdlparser serve
+```
+
+This serves the app at `http://127.0.0.1:8765/` (a free port is used if 8765
+is taken), opens your browser, and lists the `.wsdl`/`.xml` files in
+`~/Documents/go-data-discovery/wsdl/`. If there is exactly one, it loads
+automatically. The Go parser does the work, so the browser receives the same
+model as `-json`. Flags: `-addr host:port` (loopback addresses only) and
+`-no-open`. Press Ctrl+C to stop. See [DOCUMENTATION.md](DOCUMENTATION.md#enterprise-wsdl-explorer-spa)
 for details.
 
 ## Notes

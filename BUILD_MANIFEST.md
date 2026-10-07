@@ -17,6 +17,7 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 **Entry point and flag handling:**
 - **`cmd/wsdlparser/main.go`** (163 lines) — WSDL parsing flow, CLI flags, JSON output, file picker.
 - **`cmd/wsdlparser/describe.go`** (97 lines) — `describe` subcommand CLI wiring.
+- **`cmd/wsdlparser/serve.go`** — `serve` subcommand: loopback listener, browser launch, graceful shutdown.
 
 **WSDL parsing packages:**
 - **`internal/wsdl/types.go`** (184 lines) — `encoding/xml` structs mirroring the WSDL schema.
@@ -26,15 +27,27 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 **Describe subcommand package:**
 - **`internal/describe/describe.go`** (309 lines) — `sf` CLI runner, `Client` struct, batch logic, names-file parsing.
 
+**Embedded web server packages:**
+- **`internal/server/server.go`** — HTTP handler: serves the embedded SPA plus `/api/files` and `/api/model`.
+- **`visualizations/D3/embed.go`** — `go:embed` of the SPA files. **Required for the Go build** (the binary imports it); the SPA files it embeds (`index.html`, `css`, `js`, `vendor`) must therefore be present too.
+
 **Output formatting package:**
 - **`internal/report/report.go`** (74 lines) — terminal summary and JSON writer.
 
 **Total:** 13 source files, 1,558 lines of code (including tests).
 
+**Application directory (used by `build.sh`):**
+- **`build.sh`** — runs `go run ./cmd/initapp`, then `go build`; halts if the directory exists.
+- **`cmd/initapp/main.go`** — creates `~/Documents/go-data-discovery/{data,wsdl}`; exits `1` and changes nothing if the root already exists.
+- **`internal/appdir/appdir.go`** — `Root()` and `Create()`; `Create` uses `os.Mkdir` so the existence check and creation are one step.
+
 ## Test files
 
 Tests are optional but highly recommended. To run `go test ./...`, also need:
 
+- **`internal/appdir/appdir_test.go`** — creation, halt-if-exists (directory and file), missing parent, root path.
+- **`internal/server/server_test.go`** — handler tests: assets, listing, model, path traversal, host checks.
+- **`cmd/wsdlparser/serve_test.go`** — loopback check, serving and graceful stop.
 - **`cmd/wsdlparser/main_test.go`** (64 lines) — `reorderFlagsFirst` tests.
 - **`internal/wsdl/model_test.go`** (222 lines) — `BuildModel`, `fieldFromElement`, `isGreaterThanOne`.
 - **`internal/wsdl/parse_test.go`** (19 lines) — `localName`.
@@ -44,10 +57,10 @@ Test files are excluded by the binary build (`go build`), so omitting them doesn
 
 ## Enterprise WSDL Explorer (SPA)
 
-The browser app under `visualizations/D3/` is independent of the Go build. It
-has no package manager, bundler, or build step: the files are served as-is and
-can be opened straight from disk (`file://`). Go builds and tests ignore it, and
-it needs no Go files to run.
+The browser app under `visualizations/D3/` has no package manager, bundler, or
+build step: the files can be opened straight from disk (`file://`) and need no
+Go to run. The Go binary, however, embeds them (`visualizations/D3/embed.go`),
+so `go build` fails if the files listed below are missing.
 
 All of these are required for the app to load:
 
@@ -82,7 +95,11 @@ file, load it after the modules it uses.
 # Download dependencies (one-time)
 go mod download
 
-# Build the binary
+# Create ~/Documents/go-data-discovery/{data,wsdl} and build the binary
+# (halts if that directory already exists)
+./build.sh
+
+# Or build the binary only
 go build -o wsdlparser ./cmd/wsdlparser
 
 # Run tests (optional)
@@ -100,7 +117,8 @@ To build the tool in a fresh directory with the fewest files:
 
 1. Copy `go.mod` and `go.sum`.
 2. Copy all `.go` files from `cmd/wsdlparser` and `internal/*`.
-3. Run `go build -o wsdlparser ./cmd/wsdlparser`.
+3. Copy `visualizations/D3/` (`embed.go` and the SPA files it embeds).
+4. Run `go build -o wsdlparser ./cmd/wsdlparser`.
 
 This skips `README.md` and `DOCUMENTATION.md` (documentation only) and test files, and still produces a working binary.
 
@@ -120,11 +138,22 @@ Transitive dependencies are:
 ```
 go.mod
 go.sum
+build.sh
+cmd/initapp/
+  main.go
 cmd/wsdlparser/
   main.go
   main_test.go
   describe.go
+  serve.go
+  serve_test.go
 internal/
+  server/
+    server.go
+    server_test.go
+  appdir/
+    appdir.go
+    appdir_test.go
   wsdl/
     types.go
     parse.go
@@ -140,7 +169,8 @@ README.md
 DOCUMENTATION.md
 BUILD_MANIFEST.md
 .gitignore
-visualizations/D3/            (optional; the SPA, independent of the Go build)
+visualizations/D3/            (the SPA; embedded into the binary by embed.go)
+  embed.go
   index.html
   css/styles.css
   vendor/d3.min.js
