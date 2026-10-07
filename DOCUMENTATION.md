@@ -1,13 +1,13 @@
 # WSDL Parser Tool: Documentation
 
 `wsdlparser` is a Go command-line tool with two independent functions, plus a
-companion browser app for exploring its output:
+companion browser app for exploring its output and a maintenance subcommand:
 
 1. **WSDL parsing** (default): reads a Salesforce Enterprise WSDL and reports
    the sObjects, enumerated types, and SOAP operations it declares, as a
    terminal summary and, optionally, a full JSON dump.
-2. **`describe` subcommand**: fetches SObject describe metadata from a live org
-   through the `sf` CLI, one JSON file per object.
+2. **`doctor` subcommand**: builds or repairs the application directory
+   (`~/Documents/go-data-discovery/{data,wsdl}`), creating whatever's missing.
 3. **Enterprise WSDL Explorer** (`visualizations/D3/`): a static single-page app
    that visualizes a WSDL or the JSON from function 1. It is separate from the
    Go binary; see [Enterprise WSDL Explorer (SPA)](#enterprise-wsdl-explorer-spa).
@@ -21,7 +21,7 @@ The [README](README.md) is a quick-start. This document is the full reference.
 - [Command reference](#command-reference)
 - [WSDL parsing](#wsdl-parsing)
 - [JSON output schema](#json-output-schema)
-- [The describe subcommand](#the-describe-subcommand)
+- [The doctor subcommand](#the-doctor-subcommand)
 - [Enterprise WSDL Explorer (SPA)](#enterprise-wsdl-explorer-spa)
 - [Project layout and design](#project-layout-and-design)
 - [Testing](#testing)
@@ -33,7 +33,6 @@ The [README](README.md) is a quick-start. This document is the full reference.
 |------|-----|-------|
 | Go toolchain | building | `go.mod` declares `go 1.27.1`. |
 | An Enterprise WSDL | WSDL parsing | Download from Setup > API > Generate Enterprise WSDL. |
-| [`sf` CLI](https://developer.salesforce.com/tools/salesforcecli) on `PATH` | `describe` | Must already be authenticated to the target org (`sf org login web`, then `sf org list`). |
 | A desktop session | file-picker dialog | Only used when no WSDL path is given. |
 
 ## Building
@@ -58,7 +57,9 @@ directory to build again. `~/Documents` itself must already exist. The logic
 lives in `internal/appdir`.
 
 To build only the binary, without the application directory:
-`go build -o wsdlparser ./cmd/wsdlparser`.
+`go build -o wsdlparser ./cmd/wsdlparser`. Run `wsdlparser doctor` afterward
+to create the application directory without rebuilding; see
+[The doctor subcommand](#the-doctor-subcommand).
 
 The binary `wsdlparser` is git-ignored. Run it from this directory as
 `./wsdlparser`, or move it onto your `PATH`.
@@ -67,12 +68,11 @@ The binary `wsdlparser` is git-ignored. Run it from this directory as
 
 ```
 wsdlparser [-json <path>] [path/to/enterprise.wsdl]
-wsdlparser describe [flags] <target-org> <SObjectName>
-wsdlparser describe [flags] -batch <names-file> <target-org>
 wsdlparser serve [-addr host:port] [-no-open]
+wsdlparser doctor
 ```
 
-If the first argument is `describe` or `serve`, that subcommand runs. Anything
+If the first argument is `serve` or `doctor`, that subcommand runs. Anything
 else is treated as WSDL parsing.
 
 ### WSDL parsing flags
@@ -88,14 +88,6 @@ Flags may come before or after the WSDL path; both of these work:
 ./wsdlparser enterprise.wsdl -json out.json
 ```
 
-### `describe` flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-batch <file>` | none | Describe every object listed in the file. |
-| `-out <dir>` | stdout (single), `describes` (batch) | Directory for `<SObject>.json` files. |
-| `-api-version <vNN.0>` | `$API_VERSION`, else `v62.0` | REST API version used for the calls. |
-
 ### `serve` flags
 
 | Flag | Default | Description |
@@ -103,11 +95,14 @@ Flags may come before or after the WSDL path; both of these work:
 | `-addr <host:port>` | `127.0.0.1:8765` | Address to listen on. Only loopback hosts (`127.0.0.0/8`, `::1`, `localhost`) are accepted. If the default port is busy a free port is chosen; an explicit `-addr` that is busy is an error. |
 | `-no-open` | off | Do not open the browser. |
 
+### `doctor` flags
+
+None. `doctor` takes no arguments.
+
 ### Exit status
 
 `0` on success. `1` on any error, with a message of the form
-`wsdlparser: <reason>` on stderr. For `describe -batch`, exit status is `1` if
-any object failed.
+`wsdlparser: <reason>` on stderr.
 
 ## WSDL parsing
 
@@ -229,66 +224,29 @@ jq '[.SObjects[] | select(.Name | endswith("__c"))] | length' out.json   # custo
 The JSON for a full Enterprise WSDL (about 3,000 sObjects) is roughly 13 MB.
 Generated JSON is not covered by `.gitignore`; avoid committing it.
 
-## The describe subcommand
-
-`describe` is a Go port of a `describe-sobjects.sh` shell script from an
-earlier data-dictionary tool (not part of this repo). It shells out to:
-
-```
-sf api request rest /services/data/<version>/sobjects/<Name>/describe --target-org <org> --json
-```
-
-so it uses whatever authentication `sf` already has. It does not talk to
-Salesforce directly and needs no credentials of its own.
-
-### Single object
+## The doctor subcommand
 
 ```bash
-./wsdlparser describe my-org Account                  # pretty-printed JSON to stdout
-./wsdlparser describe -out describes my-org Account   # writes describes/Account.json
+./wsdlparser doctor
 ```
 
-### Batch
+Builds or repairs the application directory
+(`~/Documents/go-data-discovery/{data,wsdl}`): whichever of the root and its
+two children are missing get created; anything already present is left
+untouched. It prints one line per path, `ok <path>` or `created <path>`, then
+a summary line.
 
-```bash
-./wsdlparser describe -batch object-list.json my-org
-./wsdlparser describe -batch object-list.txt -out describes my-org
-```
+Unlike `cmd/initapp` (used by `build.sh` to guard first-time setup), `doctor`
+never fails just because the directory already exists — that's the normal,
+expected case on every run after the first. It fails only if a path that
+should be a directory is something else (a file, for example), or if
+`~/Documents` itself is missing, since `doctor` creates the application
+root and its children but not arbitrary missing ancestors.
 
-The names file may be any of:
-
-- a JSON array of strings: `["Account", "Contact"]`
-- an object with a `result` array, as `sf ... --json` emits: `{"result": ["Account"]}`
-- plain text, one name per line (blank lines and `\r` are ignored)
-
-Duplicate names are dropped. Every name must match `[A-Za-z0-9_]+`; if any
-name does not, the whole file is rejected before any request is made. This
-keeps a stray path or query fragment out of the REST URL and the output
-filename.
-
-Progress lines start with `==> `. Successful objects are written as
-`<out>/<Name>.json` (the directory is created if needed). At the end, a batch
-prints either `All N objects described into <dir>/` or a `Failed objects:`
-list and exits `1`.
-
-### API limits and safety
-
-Each object costs **one request** against the org's shared Daily API Request
-allowance. The tool protects that budget:
-
-- **Pre-flight check.** Before the first describe, it reads
-  `DailyApiRequests.Remaining` from the `/limits` endpoint. If fewer requests
-  remain than there are objects, it refuses to start. If the figure can't be
-  read, it prints a warning and proceeds.
-- **Abort on exhaustion.** An HTTP 403 with `REQUEST_LIMIT_EXCEEDED` stops the
-  run immediately instead of continuing to fail for every remaining object.
-- **Sequential calls.** Requests run one at a time, so concurrency limits are
-  never a factor.
-- **Cancellation.** Ctrl-C cancels the in-flight `sf` call and the batch loop.
-
-The pre-flight check itself costs one extra request. Other individual failures
-(for example a 404 for a name that doesn't exist) are recorded and the batch
-continues.
+Run it any time the application directory has been moved, partially deleted,
+or was never created because you built with `go build` directly instead of
+`./build.sh`. The logic is `appdir.Ensure`, alongside `appdir.Create` in
+`internal/appdir/appdir.go`.
 
 ## Enterprise WSDL Explorer (SPA)
 
@@ -405,10 +363,10 @@ cmd/initapp/
   main.go           creates ~/Documents/go-data-discovery/{data,wsdl}; run by build.sh
 cmd/wsdlparser/
   main.go           entry point, flag handling, WSDL flow, JSON file output
-  describe.go       `describe` subcommand CLI wiring
   serve.go          `serve` subcommand: listener, browser launch, graceful shutdown
+  doctor.go         `doctor` subcommand: build/repair the application directory
 internal/appdir/
-  appdir.go         Root() and Create(): the application directory
+  appdir.go         Root(), Create(), and Ensure(): the application directory
 internal/wsdl/
   types.go          encoding/xml structs mirroring the WSDL document
   parse.go          Parse(path): read and unmarshal the WSDL
@@ -417,8 +375,6 @@ internal/report/
   report.go         terminal summary and JSON writer
 internal/server/
   server.go         HTTP handler: embedded SPA + /api/files, /api/model
-internal/describe/
-  describe.go       sf-backed describe client, batch logic, names-file parsing
 visualizations/D3/  browser SPA (see Enterprise WSDL Explorer above)
   embed.go          go:embed of the SPA files, used by `serve`
 ```
@@ -435,19 +391,16 @@ Design notes:
   positionals so `wsdlparser file.wsdl -json out.json` works. Its
   `flagsTakingValue` map must list every flag that takes a value; **add new
   value-taking flags there** or `-flag value` will be mis-ordered.
-- **Injectable `sf` runner.** `describe.Client.Run` is a function field
-  (`Runner`) defaulting to a real `sf` exec. Tests substitute a fake, so the
-  suite never touches an org or needs `sf` installed.
-- **Typed errors.** `describe` distinguishes `CommandError` (the `sf` process
-  failed), `APIError` (Salesforce returned non-200), and name-validation errors,
-  so the batch loop can decide whether to continue or abort.
 
 ### Extending
 
 - *New field attribute in the JSON:* add it to `types.go` (parse), `Field` and
   `fieldFromElement` in `model.go`, and a case in `TestFieldFromElement`.
-- *New subcommand:* dispatch on `args[0]` in `run()` in `main.go`, as
-  `describe` does, and add any value-taking flags to `flagsTakingValue`.
+- *New subcommand:* dispatch on `args[0]` in `run()` in `main.go`, as `serve`
+  and `doctor` do, and add any value-taking flags to `flagsTakingValue`.
+- *New application-directory child:* add it to `appdir.Children`; both
+  `Create` and `Ensure` (and so `initapp` and `doctor`) pick it up
+  automatically.
 
 ## Testing
 
@@ -459,10 +412,9 @@ go build ./... && go vet ./... && go test ./...
 |---------|--------|
 | `cmd/wsdlparser` | `reorderFlagsFirst` argument ordering. |
 | `internal/wsdl` | `BuildModel` (sObject/enum/operation extraction and skipping rules, empty input), `fieldFromElement`, `isGreaterThanOne`, `localName`. |
-| `internal/appdir` | Directory creation, halt when the root exists (as directory or file), missing parent, root path, and the bare-filename input/output resolution rules. |
+| `internal/appdir` | Directory creation, halt when the root exists (as directory or file), missing parent, root path, bare-filename input/output resolution rules, and `Ensure`'s create-missing/leave-existing/fail-on-non-directory behavior. |
 | `internal/server` | Asset serving, security headers, file listing (including a missing `wsdl/`), model endpoint, path-traversal and bad-name rejection, non-loopback `Host` rejection, GET-only. |
 | `cmd/wsdlparser` (serve) | Loopback-only `-addr` check, serving the embedded SPA, graceful stop on cancel, argument rejection. |
-| `internal/describe` | Request arguments, API-version override, error types, name validation, batch success/failure, insufficient-budget refusal, unknown-limits warning, abort on `REQUEST_LIMIT_EXCEEDED`, cancellation, names-file parsing. |
 
 `internal/report` has no tests yet, and neither does the SPA in
 `visualizations/D3/`. Check SPA changes by loading a WSDL in a browser and
@@ -473,14 +425,11 @@ walking each tab.
 | Symptom | Cause and fix |
 |---------|---------------|
 | `no such file or directory: ./wsdlparser` | The binary isn't built yet. Run the build command in [Building](#building) from this directory. |
+| Bare filenames aren't found in `wsdl/`/`data/`, or the file dialog opens somewhere unexpected | The application directory is missing or incomplete (for example you built with `go build` directly instead of `./build.sh`). Run `./wsdlparser doctor` to create whatever's missing. |
 | `no file selected` | You cancelled the file dialog. Pass the path as an argument instead. |
 | `cannot read "<path>"` | The WSDL path doesn't exist or isn't readable. |
 | An XML parse error | The file isn't a well-formed WSDL. The tool is built and tested against the Enterprise WSDL; other WSDLs (for example Partner) haven't been verified. |
-| `the sf CLI was not found on PATH` | Install the Salesforce CLI and open a new shell. |
-| `describe` fails with an auth or org error | Run `sf org list` and use the alias or username shown there as `<target-org>`; re-authenticate with `sf org login web` if it has expired. |
-| `org has only N daily API requests remaining` | The batch is larger than the org's remaining daily allowance. Split the names file or wait for the 24-hour window to reset. |
-| `invalid sObject name` | A name contains characters other than letters, digits, and underscores. Fix the names file. |
 | SPA shows "Parsing…" forever or a blank page | Open the browser console. Usually a script failed to load (check that `vendor/d3.min.js` exists) or a file was added to `index.html` out of order. |
 | SPA: `Could not read <file>: Not well-formed XML` | The file isn't a valid WSDL. Load the JSON from `wsdlparser -json` instead. |
-| SPA: `JSON is not wsdlparser output` | The JSON has no `SObjects` array. It may be `describe` output rather than `-json` output. |
+| SPA: `JSON is not wsdlparser output` | The JSON has no `SObjects` array. |
 | `-json out.json` ignored | Should not happen (flags are reordered). If you added a new flag, make sure it's in `flagsTakingValue`. |
