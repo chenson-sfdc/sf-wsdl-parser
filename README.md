@@ -16,6 +16,11 @@ build halts with a message and changes nothing; move or remove the directory
 to build again. To build the binary only, without touching the application
 directory, run `go build -o wsdlparser ./cmd/wsdlparser`.
 
+If the application directory is later moved, partially deleted, or just
+missing (for example after building only the binary), run
+`./wsdlparser doctor` to create whatever's missing without disturbing
+anything already there.
+
 ## Usage
 
 Pass the WSDL path directly:
@@ -100,6 +105,17 @@ automatically. The Go parser does the work, so the browser receives the same
 model as `-json`. Flags: `-addr host:port` (loopback addresses only) and
 `-no-open`. Press Ctrl+C to stop. See [DOCUMENTATION.md](DOCUMENTATION.md#enterprise-wsdl-explorer-spa)
 for details.
+
+### Repairing the application directory
+
+```bash
+./wsdlparser doctor
+```
+
+Creates `~/Documents/go-data-discovery/` and its `data/`/`wsdl/` children,
+whichever of them are missing, and reports `ok` or `created` for each. Unlike
+`build.sh`'s setup step, it's safe to run anytime and never fails just
+because the directory already exists.
 
 ## Notes
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -73,6 +74,76 @@ func TestRootIsUnderDocuments(t *testing.T) {
 	}
 	if want := "/home/someone/Documents/go-data-discovery"; got != want {
 		t.Errorf("Root() = %q, want %q", got, want)
+	}
+}
+
+func TestEnsureCreatesRootAndChildren(t *testing.T) {
+	root := filepath.Join(t.TempDir(), Name)
+	res, err := Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCreated := append([]string{root}, childPaths(root)...)
+	if !reflect.DeepEqual(res.Created, wantCreated) {
+		t.Errorf("Created = %v, want %v", res.Created, wantCreated)
+	}
+	if len(res.Existing) != 0 {
+		t.Errorf("Existing = %v, want none", res.Existing)
+	}
+	for _, c := range append([]string{"."}, Children...) {
+		fi, err := os.Stat(filepath.Join(root, c))
+		if err != nil || !fi.IsDir() {
+			t.Errorf("expected directory %q: %v", c, err)
+		}
+	}
+}
+
+func TestEnsureIsIdempotent(t *testing.T) {
+	root := newApp(t)
+	res, err := Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Created) != 0 {
+		t.Errorf("Created = %v, want none", res.Created)
+	}
+	wantExisting := append([]string{root}, childPaths(root)...)
+	if !reflect.DeepEqual(res.Existing, wantExisting) {
+		t.Errorf("Existing = %v, want %v", res.Existing, wantExisting)
+	}
+}
+
+func TestEnsureFillsInMissingChild(t *testing.T) {
+	root := filepath.Join(t.TempDir(), Name)
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "wsdl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Ensure(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{filepath.Join(root, "data")}; !reflect.DeepEqual(res.Created, want) {
+		t.Errorf("Created = %v, want %v", res.Created, want)
+	}
+	if _, err := os.Stat(filepath.Join(root, "data")); err != nil {
+		t.Errorf("expected data/ to be created: %v", err)
+	}
+}
+
+func TestEnsureFailsWhenPathIsAFile(t *testing.T) {
+	root := filepath.Join(t.TempDir(), Name)
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "data"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Ensure(root); err == nil {
+		t.Fatal("want an error when a child path is a file, got nil")
 	}
 }
 

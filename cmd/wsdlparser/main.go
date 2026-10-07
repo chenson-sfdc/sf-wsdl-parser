@@ -35,12 +35,16 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "serve" {
 		return runServe(args[1:])
 	}
+	if len(args) > 0 && args[0] == "doctor" {
+		return runDoctor(args[1:])
+	}
 	fs := flag.NewFlagSet("wsdlparser", flag.ContinueOnError)
 	jsonOut := fs.String("json", "", "write the full parsed model as JSON to this path (use '-' for stdout)")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage: wsdlparser [flags] [path/to/enterprise.wsdl]")
 		fmt.Fprintln(fs.Output(), "If no path is given, a file-browser dialog opens to pick one.")
 		fmt.Fprintln(fs.Output(), "Run 'wsdlparser serve' to explore the WSDL files visually in a browser.")
+		fmt.Fprintln(fs.Output(), "Run 'wsdlparser doctor' to build or repair the application directory structure.")
 		fs.PrintDefaults()
 	}
 	// flag.Parse stops at the first non-flag token, so "wsdlparser file.wsdl

@@ -49,6 +49,48 @@ func Create(root string) error {
 	return nil
 }
 
+// EnsureResult reports what Ensure found: which of root and its children it
+// had to create, and which were already present.
+type EnsureResult struct {
+	Root     string
+	Created  []string
+	Existing []string
+}
+
+// Ensure makes root and its children, creating whichever are missing and
+// leaving the rest untouched. Unlike Create, it does not fail if root
+// already exists; it's meant for repairing or verifying an installation
+// (e.g. a "doctor" command) rather than guarding first-time setup.
+func Ensure(root string) (*EnsureResult, error) {
+	res := &EnsureResult{Root: root}
+	paths := append([]string{root}, childPaths(root)...)
+	for _, p := range paths {
+		fi, err := os.Stat(p)
+		switch {
+		case err == nil && fi.IsDir():
+			res.Existing = append(res.Existing, p)
+		case err == nil:
+			return res, fmt.Errorf("%s exists and is not a directory", p)
+		case errors.Is(err, os.ErrNotExist):
+			if err := os.Mkdir(p, 0o755); err != nil {
+				return res, err
+			}
+			res.Created = append(res.Created, p)
+		default:
+			return res, err
+		}
+	}
+	return res, nil
+}
+
+func childPaths(root string) []string {
+	paths := make([]string, len(Children))
+	for i, c := range Children {
+		paths[i] = filepath.Join(root, c)
+	}
+	return paths
+}
+
 func isBare(p string) bool { return p != "" && p != "-" && filepath.Base(p) == p }
 
 // ResolveInput maps a bare filename that is not in the current directory to

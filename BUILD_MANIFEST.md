@@ -16,42 +16,38 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 
 **Entry point and flag handling:**
 - **`cmd/wsdlparser/main.go`** (163 lines) — WSDL parsing flow, CLI flags, JSON output, file picker.
-- **`cmd/wsdlparser/describe.go`** (97 lines) — `describe` subcommand CLI wiring.
-- **`cmd/wsdlparser/serve.go`** — `serve` subcommand: loopback listener, browser launch, graceful shutdown.
+- **`cmd/wsdlparser/serve.go`** (119 lines) — `serve` subcommand: loopback listener, browser launch, graceful shutdown.
+- **`cmd/wsdlparser/doctor.go`** (51 lines) — `doctor` subcommand: builds/repairs the application directory, reporting what it created vs. found.
 
 **WSDL parsing packages:**
 - **`internal/wsdl/types.go`** (184 lines) — `encoding/xml` structs mirroring the WSDL schema.
 - **`internal/wsdl/parse.go`** (33 lines) — `Parse(path)` function to read and unmarshal the WSDL.
 - **`internal/wsdl/model.go`** (164 lines) — `BuildModel(def)` to extract sObjects, enums, operations.
 
-**Describe subcommand package:**
-- **`internal/describe/describe.go`** (309 lines) — `sf` CLI runner, `Client` struct, batch logic, names-file parsing.
-
 **Embedded web server packages:**
-- **`internal/server/server.go`** — HTTP handler: serves the embedded SPA plus `/api/files` and `/api/model`.
-- **`visualizations/D3/embed.go`** — `go:embed` of the SPA files. **Required for the Go build** (the binary imports it); the SPA files it embeds (`index.html`, `css`, `js`, `vendor`) must therefore be present too.
+- **`internal/server/server.go`** (125 lines) — HTTP handler: serves the embedded SPA plus `/api/files` and `/api/model`.
+- **`visualizations/D3/embed.go`** (9 lines) — `go:embed` of the SPA files. **Required for the Go build** (the binary imports it); the SPA files it embeds (`index.html`, `css`, `js`, `vendor`) must therefore be present too.
 
 **Output formatting package:**
 - **`internal/report/report.go`** (74 lines) — terminal summary and JSON writer.
 
-**Total:** 13 source files, 1,558 lines of code (including tests).
+**Total:** 9 source files, 922 lines of code (excluding tests).
 
-**Application directory (used by `build.sh`):**
-- **`build.sh`** — runs `go run ./cmd/initapp`, then `go build`; halts if the directory exists.
-- **`cmd/initapp/main.go`** — creates `~/Documents/go-data-discovery/{data,wsdl}`; exits `1` and changes nothing if the root already exists.
-- **`internal/appdir/appdir.go`** — `Root()` and `Create()`; `Create` uses `os.Mkdir` so the existence check and creation are one step.
+**Application directory (used by `build.sh` and the `doctor` subcommand):**
+- **`build.sh`** (9 lines) — runs `go run ./cmd/initapp`, then `go build`; halts if the directory exists.
+- **`cmd/initapp/main.go`** (31 lines) — creates `~/Documents/go-data-discovery/{data,wsdl}`; exits `1` and changes nothing if the root already exists.
+- **`internal/appdir/appdir.go`** (123 lines) — `Root()`, `Create()`, and `Ensure()`; `Create` uses `os.Mkdir` so the existence check and creation are one step, while `Ensure` (used by `doctor.go` above) fills in whatever's missing without failing if the root already exists.
 
 ## Test files
 
 Tests are optional but highly recommended. To run `go test ./...`, also need:
 
-- **`internal/appdir/appdir_test.go`** — creation, halt-if-exists (directory and file), missing parent, root path.
-- **`internal/server/server_test.go`** — handler tests: assets, listing, model, path traversal, host checks.
-- **`cmd/wsdlparser/serve_test.go`** — loopback check, serving and graceful stop.
+- **`internal/appdir/appdir_test.go`** (202 lines) — creation, halt-if-exists (directory and file), missing parent, root path, `Ensure` create/idempotent/partial-repair/fail-on-non-directory cases.
+- **`internal/server/server_test.go`** (160 lines) — handler tests: assets, listing, model, path traversal, host checks.
+- **`cmd/wsdlparser/serve_test.go`** (75 lines) — loopback check, serving and graceful stop.
 - **`cmd/wsdlparser/main_test.go`** (64 lines) — `reorderFlagsFirst` tests.
 - **`internal/wsdl/model_test.go`** (222 lines) — `BuildModel`, `fieldFromElement`, `isGreaterThanOne`.
 - **`internal/wsdl/parse_test.go`** (19 lines) — `localName`.
-- **`internal/describe/describe_test.go`** (229 lines) — describe, batch, API limits, names parsing (uses a fake `sf` runner).
 
 Test files are excluded by the binary build (`go build`), so omitting them doesn't break the tool.
 
@@ -87,7 +83,6 @@ file, load it after the modules it uses.
 ## Excluded
 
 - **`out-data.json`** — generated JSON output (about 13 MB for a full Enterprise WSDL). Not committed; produce one with `wsdlparser -json`.
-- The `describe-sobjects.sh` script that `describe` was ported from — not part of this repo and not needed to build or run `wsdlparser`.
 
 ## Build process
 
@@ -144,9 +139,9 @@ cmd/initapp/
 cmd/wsdlparser/
   main.go
   main_test.go
-  describe.go
   serve.go
   serve_test.go
+  doctor.go
 internal/
   server/
     server.go
@@ -160,9 +155,6 @@ internal/
     parse_test.go
     model.go
     model_test.go
-  describe/
-    describe.go
-    describe_test.go
   report/
     report.go
 README.md
@@ -186,7 +178,7 @@ visualizations/D3/            (the SPA; embedded into the binary by embed.go)
 
 ## Size reference
 
-- **Total source:** 1,558 lines of Go code (including 534 lines of tests).
+- **Total source:** 1,818 lines of Go code (including 742 lines of tests).
 - **go.mod:** 4 KB.
 - **go.sum:** 4 KB.
 - **Typical binary size:** ~10–12 MB (unstripped), ~3–4 MB (stripped with `go build -ldflags="-s -w"`).
