@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__client__readPage",
+      "mcp__client__screenshotPage",
+      "mcp__client__clickElement",
+      "mcp__client__typeInPage",
+      "mcp__client__hoverElement",
+      "mcp__client__navigatePage"
+    ]
+  }
+}
