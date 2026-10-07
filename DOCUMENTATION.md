@@ -1,12 +1,16 @@
 # WSDL Parser Tool: Documentation
 
-`wsdlparser` is a Go command-line tool with two independent functions:
+`wsdlparser` is a Go command-line tool with two independent functions, plus a
+companion browser app for exploring its output:
 
 1. **WSDL parsing** (default): reads a Salesforce Enterprise WSDL and reports
    the sObjects, enumerated types, and SOAP operations it declares, as a
    terminal summary and, optionally, a full JSON dump.
 2. **`describe` subcommand**: fetches SObject describe metadata from a live org
    through the `sf` CLI, one JSON file per object.
+3. **Enterprise WSDL Explorer** (`visualizations/D3/`): a static single-page app
+   that visualizes a WSDL or the JSON from function 1. It is separate from the
+   Go binary; see [Enterprise WSDL Explorer (SPA)](#enterprise-wsdl-explorer-spa).
 
 The [README](README.md) is a quick-start. This document is the full reference.
 
@@ -18,7 +22,7 @@ The [README](README.md) is a quick-start. This document is the full reference.
 - [WSDL parsing](#wsdl-parsing)
 - [JSON output schema](#json-output-schema)
 - [The describe subcommand](#the-describe-subcommand)
-- [Using the output with the dashboard](#using-the-output-with-the-dashboard)
+- [Enterprise WSDL Explorer (SPA)](#enterprise-wsdl-explorer-spa)
 - [Project layout and design](#project-layout-and-design)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -35,7 +39,6 @@ The [README](README.md) is a quick-start. This document is the full reference.
 ## Building
 
 ```bash
-cd scripts/wsdl-parser-tool
 go build -o wsdlparser ./cmd/wsdlparser
 ```
 
@@ -180,13 +183,12 @@ jq '[.SObjects[] | select(.Name | endswith("__c"))] | length' out.json   # custo
 ```
 
 The JSON for a full Enterprise WSDL (about 3,000 sObjects) is roughly 13 MB.
-`out-data.json` in this directory is such an output file and is not covered by
-`.gitignore`; avoid committing generated JSON.
+Generated JSON is not covered by `.gitignore`; avoid committing it.
 
 ## The describe subcommand
 
-`describe` is a Go port of `scripts/data-dictionary-tool/describe-sobjects.sh`.
-It shells out to:
+`describe` is a Go port of a `describe-sobjects.sh` shell script from an
+earlier data-dictionary tool (not part of this repo). It shells out to:
 
 ```
 sf api request rest /services/data/<version>/sobjects/<Name>/describe --target-org <org> --json
@@ -244,14 +246,89 @@ The pre-flight check itself costs one extra request. Other individual failures
 (for example a 404 for a name that doesn't exist) are recorded and the batch
 continues.
 
-## Using the output with the dashboard
+## Enterprise WSDL Explorer (SPA)
 
-The JSON produced by `-json` is the input format for the `wsdl` mode of
-[`visualization/go-data-discovery.html`](../../visualization/go-data-discovery.html).
-Open the page, choose the JSON file, and it renders counts, an Objects by Type
-chart (inferred from name suffixes such as `__c`, `__e`, `__mdt`), and a
-browsable object hierarchy. See [`WSDL_MODE_README.md`](../../WSDL_MODE_README.md)
-for details.
+`visualizations/D3/` is a static, client-side single-page app built with
+[D3](https://d3js.org) v7.9.0 (vendored in `vendor/`). It needs no Go binary, no
+server, no network access, and no build step.
+
+### Running
+
+Open `visualizations/D3/index.html` in a browser (double-click it, or
+`open visualizations/D3/index.html` on macOS). Then either:
+
+- click **Load file…**, or
+- drag a file onto the page.
+
+Accepted inputs (detected by content, not extension; the file picker filters
+to `.wsdl`, `.xml`, `.json`):
+
+| Input | Notes |
+|-------|-------|
+| An Enterprise WSDL | Parsed in the browser with `DOMParser`. The API version and generation date are read from the header comment when present. |
+| JSON from `wsdlparser -json` | Any file starting with `{`. Must contain an `SObjects` array; see [JSON output schema](#json-output-schema). |
+
+The file is read locally and never uploaded. Files with no sObjects are
+rejected with "No sObjects found. Is this an Enterprise WSDL?". Only the
+Enterprise WSDL has been tested; other WSDLs (for example Partner) haven't been
+verified.
+
+### Views
+
+| Tab | Shows |
+|-----|-------|
+| **Overview** | KPI tiles (sObjects, fields, relationships, operations, enumerations); objects by kind; fields-per-object histogram; field types; largest objects; most-referenced objects. Clicking a bar in the last two opens that object. |
+| **Objects & relationships** | Filterable, sortable list of sObjects (by name, field count, or referenced-by count; the list shows the first 400 matches). The selected object shows a relationship graph (click a neighbour to re-center), a filterable field table with nillable/optional/repeated flags, and a table of what it references and what references it. |
+| **Operations** | Operations grouped by purpose (Describe, Query & search, Data change, Session & password, Email & templates, Other), plus a filterable table of request/response types, faults, and documentation. |
+| **Enumerations** | The 15 largest enums and a table of every enum with its values. |
+
+Every chart has a **View as table** twin. The **Theme** button cycles auto,
+light, and dark; the choice is stored in `localStorage` under `wsdl-theme`.
+
+### How relationships and kinds are derived
+
+The WSDL has no explicit foreign keys, so `model.js` infers them:
+
+- **Relationship edge:** a field whose type is the name of another sObject in
+  the file. Edges are de-duplicated per (source, target) pair and keep the
+  names of the fields that create them. Self-references are excluded.
+- **Child relationships:** fields of type `QueryResult`; counted separately and
+  not drawn as edges.
+- **Polymorphic references:** fields of type `sObject`; counted but not drawn,
+  since the target isn't known from the WSDL.
+- **Kind:** from the name suffix (`__mdt` custom metadata, `__e` platform
+  event, `__c` custom object) or a companion suffix (`ChangeEvent`, `History`,
+  `Share`, `Feed`) whose base object exists in the file. Other names containing
+  `__` are "Other"; the rest are "Standard".
+- **Operation group:** matched by name patterns in `OP_GROUPS`.
+
+### Layout
+
+```
+visualizations/D3/
+  index.html     page shell; loads the scripts in dependency order
+  css/styles.css layout and light/dark themes
+  vendor/        d3.min.js (v7.9.0) and its ISC license
+  js/
+    util.js      App namespace, el() DOM helper, cards, tooltip, theme, debounce
+    parser.js    parseWsdl / parseJson / parseFile; output matches the Go JSON schema
+    model.js     build(): kinds, edges, type counts, operation groups
+    charts.js    hbar, columns, egoGraph (D3 SVG charts)
+    views.js     overview, objects, operations, enums
+    app.js       tabs, file loading, drag and drop, startup
+```
+
+Modules attach to a shared `window.App` object rather than using ES modules,
+so the page works from `file://` (browsers block module imports there). Script
+order in `index.html` matters.
+
+### Keeping it in sync with the Go tool
+
+`js/parser.js` reimplements the extraction rules from `internal/wsdl` in
+JavaScript and must produce the same shape as the Go JSON output. If you add a
+field to the Go model (see [Extending](#extending)), mirror it in
+`parseWsdl` and `parseJson`, or the SPA will not see it when loading a WSDL
+directly. The SPA has no automated tests.
 
 ## Project layout and design
 
@@ -267,6 +344,7 @@ internal/report/
   report.go         terminal summary and JSON writer
 internal/describe/
   describe.go       sf-backed describe client, batch logic, names-file parsing
+visualizations/D3/  browser SPA (see Enterprise WSDL Explorer above)
 ```
 
 Pipeline for WSDL parsing: `Parse` (XML to `Definitions`) then `BuildModel`
@@ -307,7 +385,9 @@ go build ./... && go vet ./... && go test ./...
 | `internal/wsdl` | `BuildModel` (sObject/enum/operation extraction and skipping rules, empty input), `fieldFromElement`, `isGreaterThanOne`, `localName`. |
 | `internal/describe` | Request arguments, API-version override, error types, name validation, batch success/failure, insufficient-budget refusal, unknown-limits warning, abort on `REQUEST_LIMIT_EXCEEDED`, cancellation, names-file parsing. |
 
-`internal/report` has no tests yet.
+`internal/report` has no tests yet, and neither does the SPA in
+`visualizations/D3/`. Check SPA changes by loading a WSDL in a browser and
+walking each tab.
 
 ## Troubleshooting
 
@@ -321,4 +401,7 @@ go build ./... && go vet ./... && go test ./...
 | `describe` fails with an auth or org error | Run `sf org list` and use the alias or username shown there as `<target-org>`; re-authenticate with `sf org login web` if it has expired. |
 | `org has only N daily API requests remaining` | The batch is larger than the org's remaining daily allowance. Split the names file or wait for the 24-hour window to reset. |
 | `invalid sObject name` | A name contains characters other than letters, digits, and underscores. Fix the names file. |
+| SPA shows "Parsing…" forever or a blank page | Open the browser console. Usually a script failed to load (check that `vendor/d3.min.js` exists) or a file was added to `index.html` out of order. |
+| SPA: `Could not read <file>: Not well-formed XML` | The file isn't a valid WSDL. Load the JSON from `wsdlparser -json` instead. |
+| SPA: `JSON is not wsdlparser output` | The JSON has no `SObjects` array. It may be `describe` output rather than `-json` output. |
 | `-json out.json` ignored | Should not happen (flags are reordered). If you added a new flag, make sure it's in `flagsTakingValue`. |

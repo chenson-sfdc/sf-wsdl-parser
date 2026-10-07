@@ -6,7 +6,6 @@ enumerated types, and SOAP operations it declares.
 ## Build
 
 ```bash
-cd scripts/wsdl-parser-tool
 go build -o wsdlparser ./cmd/wsdlparser
 ```
 
@@ -55,6 +54,22 @@ Flags may appear before or after the WSDL path:
 The terminal summary shows counts plus the 15 largest sObjects by field
 count and the full operation list; use `-json` for the complete, structured
 dump (all sObjects and all their fields).
+
+## Enterprise WSDL Explorer (browser app)
+
+`visualizations/D3/` contains a single-page app for exploring a WSDL
+visually: object counts by kind, largest objects, a per-object relationship
+graph, searchable operations, and enumerations. There is no build step and no
+server. Open the page in a browser:
+
+```bash
+open visualizations/D3/index.html      # macOS; or just double-click the file
+```
+
+Then drop in either the Enterprise `.wsdl` itself or the JSON written by
+`wsdlparser -json`. Everything is parsed locally in the browser; nothing is
+uploaded. See [DOCUMENTATION.md](DOCUMENTATION.md#enterprise-wsdl-explorer-spa)
+for details.
 
 ## Notes
 

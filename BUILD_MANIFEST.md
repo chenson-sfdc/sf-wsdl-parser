@@ -42,6 +42,29 @@ Tests are optional but highly recommended. To run `go test ./...`, also need:
 
 Test files are excluded by the binary build (`go build`), so omitting them doesn't break the tool.
 
+## Enterprise WSDL Explorer (SPA)
+
+The browser app under `visualizations/D3/` is independent of the Go build. It
+has no package manager, bundler, or build step: the files are served as-is and
+can be opened straight from disk (`file://`). Go builds and tests ignore it, and
+it needs no Go files to run.
+
+All of these are required for the app to load:
+
+- **`visualizations/D3/index.html`** — page shell; loads the scripts below in order.
+- **`visualizations/D3/css/styles.css`** (218 lines) — layout, light/dark themes.
+- **`visualizations/D3/vendor/d3.min.js`** — D3 v7.9.0, vendored so the app works offline with no CDN.
+- **`visualizations/D3/vendor/d3.LICENSE`** — D3's ISC license; keep it alongside `d3.min.js`.
+- **`visualizations/D3/js/util.js`** (107 lines) — `App` namespace, DOM helper `el`, cards, tooltip, theme, debounce.
+- **`visualizations/D3/js/parser.js`** (150 lines) — browser-side WSDL XML and `wsdlparser` JSON parsing.
+- **`visualizations/D3/js/model.js`** (119 lines) — derives kinds, relationship edges, type and operation groupings.
+- **`visualizations/D3/js/charts.js`** (191 lines) — bar, column, and relationship-graph charts.
+- **`visualizations/D3/js/views.js`** (219 lines) — Overview, Objects, Operations, and Enumerations views.
+- **`visualizations/D3/js/app.js`** (95 lines) — tabs, file loading, drag and drop, startup.
+
+Script order in `index.html` matters (`util.js` first, `app.js` last); when adding a
+file, load it after the modules it uses.
+
 ## Optional but recommended
 
 - **`README.md`** — quick-start usage.
@@ -50,14 +73,12 @@ Test files are excluded by the binary build (`go build`), so omitting them doesn
 
 ## Excluded
 
-- **`out-data.json`** (13 MB) — an example JSON output from a real Enterprise WSDL. This is not used by the build, but is helpful to understand the JSON structure.
-- The `scripts/data-dictionary-tool/describe-sobjects.sh` script that was ported — not needed to build or run `wsdlparser`.
+- **`out-data.json`** — generated JSON output (about 13 MB for a full Enterprise WSDL). Not committed; produce one with `wsdlparser -json`.
+- The `describe-sobjects.sh` script that `describe` was ported from — not part of this repo and not needed to build or run `wsdlparser`.
 
 ## Build process
 
 ```bash
-cd scripts/wsdl-parser-tool
-
 # Download dependencies (one-time)
 go mod download
 
@@ -119,6 +140,18 @@ README.md
 DOCUMENTATION.md
 BUILD_MANIFEST.md
 .gitignore
+visualizations/D3/            (optional; the SPA, independent of the Go build)
+  index.html
+  css/styles.css
+  vendor/d3.min.js
+  vendor/d3.LICENSE
+  js/
+    util.js
+    parser.js
+    model.js
+    charts.js
+    views.js
+    app.js
 ```
 
 ## Size reference
