@@ -39,8 +39,26 @@ The [README](README.md) is a quick-start. This document is the full reference.
 ## Building
 
 ```bash
-go build -o wsdlparser ./cmd/wsdlparser
+./build.sh
 ```
+
+`build.sh` runs `go run ./cmd/initapp`, which creates the application
+directory, then `go build -o wsdlparser ./cmd/wsdlparser`:
+
+```
+~/Documents/go-data-discovery/
+  data/
+  wsdl/
+```
+
+If `~/Documents/go-data-discovery` already exists (as a directory, file, or
+symlink), `initapp` creates nothing, prints that the directory already exists,
+and exits `1`, so the script stops before compiling. Move or remove the
+directory to build again. `~/Documents` itself must already exist. The logic
+lives in `internal/appdir`.
+
+To build only the binary, without the application directory:
+`go build -o wsdlparser ./cmd/wsdlparser`.
 
 The binary `wsdlparser` is git-ignored. Run it from this directory as
 `./wsdlparser`, or move it onto your `PATH`.
@@ -51,16 +69,17 @@ The binary `wsdlparser` is git-ignored. Run it from this directory as
 wsdlparser [-json <path>] [path/to/enterprise.wsdl]
 wsdlparser describe [flags] <target-org> <SObjectName>
 wsdlparser describe [flags] -batch <names-file> <target-org>
+wsdlparser serve [-addr host:port] [-no-open]
 ```
 
-If the first argument is `describe`, the subcommand runs. Anything else is
-treated as WSDL parsing.
+If the first argument is `describe` or `serve`, that subcommand runs. Anything
+else is treated as WSDL parsing.
 
 ### WSDL parsing flags
 
 | Flag | Description |
 |------|-------------|
-| `-json <path>` | Also write the full parsed model as JSON to `<path>`. Use `-json -` for stdout. |
+| `-json <path>` | Also write the full parsed model as JSON to `<path>`. Use `-json -` for stdout. A bare filename (no directory part) is written to `~/Documents/go-data-discovery/data/`. |
 
 Flags may come before or after the WSDL path; both of these work:
 
@@ -76,6 +95,13 @@ Flags may come before or after the WSDL path; both of these work:
 | `-batch <file>` | none | Describe every object listed in the file. |
 | `-out <dir>` | stdout (single), `describes` (batch) | Directory for `<SObject>.json` files. |
 | `-api-version <vNN.0>` | `$API_VERSION`, else `v62.0` | REST API version used for the calls. |
+
+### `serve` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-addr <host:port>` | `127.0.0.1:8765` | Address to listen on. Only loopback hosts (`127.0.0.0/8`, `::1`, `localhost`) are accepted. If the default port is busy a free port is chosen; an explicit `-addr` that is busy is an error. |
+| `-no-open` | off | Do not open the browser. |
 
 ### Exit status
 
@@ -93,6 +119,24 @@ any object failed.
 ./wsdlparser -json - enterprise.wsdl           # summary + JSON on stdout
 ./wsdlparser                                   # opens a file-browser dialog
 ```
+
+### The application directory
+
+If `~/Documents/go-data-discovery/` exists (created by `./build.sh`), it is used
+as a default location:
+
+- **Input.** A bare WSDL filename (no directory part) that is not in the current
+  directory is looked up in `wsdl/`. `wsdlparser execcosmos.wsdl` finds
+  `~/Documents/go-data-discovery/wsdl/execcosmos.wsdl`. A file in the current
+  directory wins over one in `wsdl/`.
+- **Output.** A bare `-json` filename is written to `data/`:
+  `-json out.json` produces `~/Documents/go-data-discovery/data/out.json`. The
+  path actually written is printed.
+- **File dialog.** It opens in `wsdl/`.
+
+Anything with a directory part (`./out.json`, `/tmp/out.json`, `sub/x.wsdl`) and
+`-json -` are used exactly as typed. If the application directory is missing,
+every path is used as typed too.
 
 The dialog (provided by [zenity](https://github.com/ncruces/zenity)) is
 filtered to `*.wsdl` and `*.xml`, with an "All files" fallback. Cancelling it
@@ -273,6 +317,30 @@ rejected with "No sObjects found. Is this an Enterprise WSDL?". Only the
 Enterprise WSDL has been tested; other WSDLs (for example Partner) haven't been
 verified.
 
+### Embedded local web server
+
+`wsdlparser serve` serves the same app from inside the binary
+(`visualizations/D3/embed.go` embeds `index.html`, `css/`, `js/`, `vendor/`).
+The SPA files stay the single source; rebuilding the binary picks up any change.
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /` and static assets | The embedded SPA. |
+| `GET /api/files` | JSON list `[{name, size}]` of `.wsdl`/`.xml` files in `~/Documents/go-data-discovery/wsdl/` (empty if the directory is absent). |
+| `GET /api/model?file=<name>` | The parsed model, identical to `wsdlparser -json`. `<name>` must be a plain filename in that directory. `400` for an invalid name, `404` if missing, `422` if it does not parse. |
+
+When the page is served this way it fetches `/api/files`, shows a button per
+file, and auto-loads when there is exactly one. Opened from disk (`file://`) the
+fetch fails silently and manual loading works as before.
+
+Safeguards: the listener refuses non-loopback addresses; requests whose `Host`
+header is not `localhost`/`127.0.0.1`/`[::1]` get `403` (blocks DNS rebinding);
+only `GET` is routed; the API reads nothing outside `wsdl/` (names containing
+separators, `..`, or other extensions are rejected); responses carry a
+restrictive `Content-Security-Policy` (`default-src 'self'`), `nosniff`, and
+`no-referrer`. The server has no authentication, which is why it never binds
+beyond the local machine.
+
 ### Views
 
 | Tab | Shows |
@@ -333,18 +401,26 @@ directly. The SPA has no automated tests.
 ## Project layout and design
 
 ```
+cmd/initapp/
+  main.go           creates ~/Documents/go-data-discovery/{data,wsdl}; run by build.sh
 cmd/wsdlparser/
   main.go           entry point, flag handling, WSDL flow, JSON file output
   describe.go       `describe` subcommand CLI wiring
+  serve.go          `serve` subcommand: listener, browser launch, graceful shutdown
+internal/appdir/
+  appdir.go         Root() and Create(): the application directory
 internal/wsdl/
   types.go          encoding/xml structs mirroring the WSDL document
   parse.go          Parse(path): read and unmarshal the WSDL
   model.go          BuildModel: reduce raw WSDL to SObjects/Enums/Operations
 internal/report/
   report.go         terminal summary and JSON writer
+internal/server/
+  server.go         HTTP handler: embedded SPA + /api/files, /api/model
 internal/describe/
   describe.go       sf-backed describe client, batch logic, names-file parsing
 visualizations/D3/  browser SPA (see Enterprise WSDL Explorer above)
+  embed.go          go:embed of the SPA files, used by `serve`
 ```
 
 Pipeline for WSDL parsing: `Parse` (XML to `Definitions`) then `BuildModel`
@@ -383,6 +459,9 @@ go build ./... && go vet ./... && go test ./...
 |---------|--------|
 | `cmd/wsdlparser` | `reorderFlagsFirst` argument ordering. |
 | `internal/wsdl` | `BuildModel` (sObject/enum/operation extraction and skipping rules, empty input), `fieldFromElement`, `isGreaterThanOne`, `localName`. |
+| `internal/appdir` | Directory creation, halt when the root exists (as directory or file), missing parent, root path, and the bare-filename input/output resolution rules. |
+| `internal/server` | Asset serving, security headers, file listing (including a missing `wsdl/`), model endpoint, path-traversal and bad-name rejection, non-loopback `Host` rejection, GET-only. |
+| `cmd/wsdlparser` (serve) | Loopback-only `-addr` check, serving the embedded SPA, graceful stop on cancel, argument rejection. |
 | `internal/describe` | Request arguments, API-version override, error types, name validation, batch success/failure, insufficient-budget refusal, unknown-limits warning, abort on `REQUEST_LIMIT_EXCEEDED`, cancellation, names-file parsing. |
 
 `internal/report` has no tests yet, and neither does the SPA in

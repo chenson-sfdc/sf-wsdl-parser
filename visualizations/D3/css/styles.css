@@ -216,3 +216,6 @@ td.mono, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fo
 @media (forced-colors: active) {
   .bar { forced-color-adjust: none; stroke: CanvasText; stroke-width: 1px; }
 }
+
+.server-files { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.server-files p { flex-basis: 100%; margin-bottom: 0; }

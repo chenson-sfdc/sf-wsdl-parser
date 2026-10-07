@@ -9,7 +9,7 @@
     ["enums", "Enumerations"],
   ];
 
-  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false };
+  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [] };
   const main = document.getElementById("main");
   const tabsNav = document.getElementById("tabs");
   const meta = document.getElementById("meta");
@@ -42,6 +42,10 @@
       el("h2", { text: state.loading ? "Parsing…" : "Load an Enterprise WSDL" }),
       el("p", { text: "Drop a .wsdl file here, or a .json file written by `wsdlparser -json`. Everything is parsed locally in your browser." }),
       state.loading ? null : el("button", { class: "btn", type: "button", text: "Choose file…", onclick: () => fileInput.click() }),
+      !state.loading && state.serverFiles.length ? el("div", { class: "server-files" }, [
+        el("p", { text: "Or open a file from the application's wsdl folder:" }),
+        ...state.serverFiles.map((f) => el("button", { class: "btn", type: "button", text: f.name, onclick: () => loadFile(serverFile(f.name)) })),
+      ]) : null,
       state.error ? el("p", { class: "error", role: "alert", text: state.error }) : null,
     ]);
     return box;
@@ -78,6 +82,29 @@
     }
   }
 
+  // A file-like object whose contents come from the embedded server (wsdlparser serve).
+  function serverFile(name) {
+    return {
+      name,
+      async text() {
+        const r = await fetch("api/model?file=" + encodeURIComponent(name));
+        if (!r.ok) throw new Error((await r.text()).trim() || r.statusText);
+        return r.text();
+      },
+    };
+  }
+
+  // Under file:// or any static host there is no API; the manual loader still works.
+  async function discoverServerFiles() {
+    try {
+      const r = await fetch("api/files", { headers: { Accept: "application/json" } });
+      if (!r.ok || !(r.headers.get("Content-Type") || "").includes("application/json")) return;
+      state.serverFiles = await r.json();
+    } catch (e) { return; }
+    if (state.serverFiles.length === 1) loadFile(serverFile(state.serverFiles[0].name));
+    else if (!state.model) render();
+  }
+
   document.getElementById("load-btn").addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => { loadFile(fileInput.files[0]); fileInput.value = ""; });
   document.getElementById("theme-btn").addEventListener("click", () => { App.theme.cycle(); });
@@ -92,4 +119,5 @@
 
   App.theme.apply();
   render();
+  discoverServerFiles();
 })(window.App);

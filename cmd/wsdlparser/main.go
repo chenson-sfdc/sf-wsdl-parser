@@ -14,10 +14,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ncruces/zenity"
 
+	"wsdlparser/internal/appdir"
 	"wsdlparser/internal/report"
 	"wsdlparser/internal/wsdl"
 )
@@ -30,11 +32,15 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "serve" {
+		return runServe(args[1:])
+	}
 	fs := flag.NewFlagSet("wsdlparser", flag.ContinueOnError)
 	jsonOut := fs.String("json", "", "write the full parsed model as JSON to this path (use '-' for stdout)")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "Usage: wsdlparser [flags] [path/to/enterprise.wsdl]")
 		fmt.Fprintln(fs.Output(), "If no path is given, a file-browser dialog opens to pick one.")
+		fmt.Fprintln(fs.Output(), "Run 'wsdlparser serve' to explore the WSDL files visually in a browser.")
 		fs.PrintDefaults()
 	}
 	// flag.Parse stops at the first non-flag token, so "wsdlparser file.wsdl
@@ -45,13 +51,18 @@ func run(args []string) error {
 		return err
 	}
 
+	// Without a resolvable application directory the paths are used as typed.
+	root, _ := appdir.Root()
+
 	path := fs.Arg(0)
 	if path == "" {
-		picked, err := promptForFile()
+		picked, err := promptForFile(filepath.Join(root, "wsdl"))
 		if err != nil {
 			return err
 		}
 		path = picked
+	} else {
+		path = appdir.ResolveInput(root, path)
 	}
 
 	if _, err := os.Stat(path); err != nil {
@@ -67,7 +78,7 @@ func run(args []string) error {
 	report.WriteSummary(os.Stdout, model)
 
 	if *jsonOut != "" {
-		return writeJSONReport(*jsonOut, model)
+		return writeJSONReport(appdir.ResolveOutput(root, *jsonOut), model)
 	}
 	return nil
 }
@@ -107,14 +118,18 @@ func reorderFlagsFirst(args []string) []string {
 
 // promptForFile opens a native OS file-browser dialog restricted to WSDL/XML
 // files and returns the chosen path.
-func promptForFile() (string, error) {
-	path, err := zenity.SelectFile(
+func promptForFile(startDir string) (string, error) {
+	opts := []zenity.Option{
 		zenity.Title("Select a Salesforce Enterprise WSDL file"),
 		zenity.FileFilters{
 			{Name: "WSDL files", Patterns: []string{"*.wsdl", "*.xml"}, CaseFold: true},
 			{Name: "All files", Patterns: []string{"*"}},
 		},
-	)
+	}
+	if fi, err := os.Stat(startDir); err == nil && fi.IsDir() {
+		opts = append(opts, zenity.Filename(startDir+string(filepath.Separator)))
+	}
+	path, err := zenity.SelectFile(opts...)
 	if errors.Is(err, zenity.ErrCanceled) {
 		return "", errors.New("no file selected")
 	}
