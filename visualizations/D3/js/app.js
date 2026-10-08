@@ -28,7 +28,7 @@
 
   function renderTabs() {
     tabsNav.replaceChildren(...TABS.map(([id, label]) => el("button", {
-      type: "button", text: label, disabled: state.model || id === "orgs" ? null : "",
+      type: "button", text: label,
       "aria-current": state.tab === id ? "page" : "false",
       onclick: () => nav(id),
     })));
