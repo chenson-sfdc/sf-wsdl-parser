@@ -106,6 +106,25 @@ model as `-json`. Flags: `-addr host:port` (loopback addresses only) and
 `-no-open`. Press Ctrl+C to stop. See [DOCUMENTATION.md](DOCUMENTATION.md#enterprise-wsdl-explorer-spa)
 for details.
 
+### Authenticated orgs
+
+Click the **Authenticated orgs** tab to list orgs authorized with the Salesforce CLI. The tab reads from `sf auth list`, with no upload to any server. Actions:
+
+- **Set default:** The radio button picks the org that the CLI uses as `target-org`.
+- **Remove:** Logout of an org (same as `sf org logout --target-org=<username>`). A confirmation dialog is shown.
+- **Add:** Opens a browser window to log in to a new org (same as `sf org login web`). Optionally set an alias and/or a specific instance URL (e.g. for a sandbox). If only one org is listed, it becomes the default automatically.
+
+**Requirements:** The Salesforce CLI (`sf`) must be installed and on `$PATH`. The tab only works under `wsdlparser serve`; file-based access (`file://`) has no CLI access.
+
+### Finding custom objects without a description
+
+The WSDL carries no sObject descriptions, so the **Missing descriptions** tab
+checks the custom objects against a separate export that you load from the tab
+(a `.csv` or `.json` with a `QualifiedApiName` and a `Description` column, for
+example from `sf data query --use-tooling-api` on `EntityDefinition`). It
+charts coverage and size of the undocumented objects and lists them with a CSV
+download. See [DOCUMENTATION.md](DOCUMENTATION.md#missing-descriptions).
+
 ### Repairing the application directory
 
 ```bash
