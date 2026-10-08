@@ -23,17 +23,29 @@ type fileInfo struct {
 	Size int64  `json:"size"`
 }
 
-type server struct{ wsdlDir string }
+type server struct {
+	wsdlDir string
+	orgState
+}
 
 // Handler serves assets at / plus GET /api/files and GET /api/model?file=NAME,
-// where NAME is a bare filename inside root/wsdl. Requests whose Host header
+// where NAME is a bare filename inside root/wsdl, and the /api/orgs endpoints
+// that drive the Salesforce CLI (see orgs.go). Requests whose Host header
 // is not a loopback name are refused, which blocks DNS-rebinding attacks from
 // web pages the user has open.
 func Handler(root string, assets fs.FS) http.Handler {
-	s := &server{wsdlDir: filepath.Join(root, "wsdl")}
+	return newHandler(root, assets, execSF)
+}
+
+func newHandler(root string, assets fs.FS, sf sfRunner) http.Handler {
+	s := &server{wsdlDir: filepath.Join(root, "wsdl"), orgState: orgState{sf: sf}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/files", s.files)
 	mux.HandleFunc("GET /api/model", s.model)
+	mux.HandleFunc("GET /api/orgs", s.orgs)
+	mux.HandleFunc("POST /api/orgs/login", guarded(s.login))
+	mux.HandleFunc("POST /api/orgs/logout", guarded(s.logout))
+	mux.HandleFunc("POST /api/orgs/default", guarded(s.setDefault))
 	mux.Handle("GET /", http.FileServerFS(assets))
 	return loopbackOnly(mux)
 }

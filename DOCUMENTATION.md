@@ -307,9 +307,61 @@ beyond the local machine.
 | **Objects & relationships** | Filterable, sortable list of sObjects (by name, field count, or referenced-by count; the list shows the first 400 matches). The selected object shows a relationship graph (click a neighbour to re-center), a filterable field table with nillable/optional/repeated flags, and a table of what it references and what references it. |
 | **Operations** | Operations grouped by purpose (Describe, Query & search, Data change, Session & password, Email & templates, Other), plus a filterable table of request/response types, faults, and documentation. |
 | **Enumerations** | The 15 largest enums and a table of every enum with its values. |
+| **Missing descriptions** | Which custom objects (`__c`) lack a description, checked against a separately loaded export (see below). KPI tiles for coverage; a coverage bar chart; undocumented objects by size; the 15 largest undocumented objects (click to open); and a filterable table with a CSV download of the current selection. |
 
 Every chart has a **View as table** twin. The **Theme** button cycles auto,
 light, and dark; the choice is stored in `localStorage` under `wsdl-theme`.
+
+### Missing descriptions
+
+The WSDL declares no description for an sObject (its only `documentation`
+elements are on operations and enumeration values), so this view needs a
+second file listing each object's description. Load it from the tab itself
+(**Choose descriptions file…**) after a WSDL is loaded. It is read in the
+browser and never uploaded; the Go server is not involved.
+
+Accepted formats, matched by file extension and content:
+
+- **CSV** with a header row and an API-name column plus a `Description`
+  column. Quoted fields, doubled quotes, and newlines inside quotes are handled.
+- **JSON**: an array of records, or an `sf ... --json` result (`result.records`).
+
+The API-name column may be `QualifiedApiName`, `ApiName`, `FullName`,
+`DeveloperName`, `SObjectType`, `Name`, or `Object` (case-insensitive).
+`DeveloperName` values without the `__c` suffix still match. A file with no
+`Description` column is rejected, since every object would otherwise look
+undocumented. One way to produce a suitable file:
+
+```bash
+sf data query --use-tooling-api --result-format csv \
+  -q "SELECT QualifiedApiName, Description FROM EntityDefinition WHERE QualifiedApiName LIKE '%__c'" > descriptions.csv
+```
+
+Each custom object gets one of three statuses: **Has description**, **Blank
+description** (present in the export, empty or whitespace), or **Not in
+export**. Objects with either of the last two statuses count as "lacking". Export rows
+that match no custom object in the WSDL are counted as *unmatched*.
+Only custom objects are checked; standard objects, custom metadata, and
+platform events are out of scope. `js/descriptions.js` holds the parsing and
+analysis; `views.descriptions` renders it.
+
+### Authenticated orgs
+
+The **Authenticated orgs** tab is driven by the embedded server's `/api/orgs` endpoints, which call the Salesforce CLI (`sf auth list`, `sf org login web`, etc.) and manage the `target-org` config. The browser never runs `sf` itself — it just has a UI for it.
+
+**Read:**
+- GET `/api/orgs` — returns `{orgs: [{username, alias, orgId, instanceUrl, isDevHub, isSandbox, isScratchOrg, oauthMethod, expired}, ...], default: "<username or empty>"}`. Sorted by alias. Tokens are never returned.
+
+**Write (guarded by same-origin JSON checks; no CORS granted):**
+- POST `/api/orgs/default` — `{"username": "..."}` sets `target-org` in the global config.
+- POST `/api/orgs/logout` — `{"username": "..."}` calls `sf org logout --target-org=<username> --no-prompt`.
+- POST `/api/orgs/login` — `{"alias": "...", "instanceUrl": "..."}` (both optional) calls `sf org login web`. The user finishes in a browser window; the endpoint waits (timeout 5m) and returns the updated list. One login at a time.
+
+Only usernames/aliases that `sf auth list` reports are accepted for removal or default-setting (injection is prevented by checking against the read-only list first).
+
+Single-org auto-default: if the list has exactly one org and no default is set, the server sets it as default (idempotent, best-effort).
+
+`js/orgs.js` renders the table and drives the form; `internal/server/orgs.go` handles the endpoints and CLI.
 
 ### How relationships and kinds are derived
 
@@ -339,8 +391,9 @@ visualizations/D3/
     util.js      App namespace, el() DOM helper, cards, tooltip, theme, debounce
     parser.js    parseWsdl / parseJson / parseFile; output matches the Go JSON schema
     model.js     build(): kinds, edges, type counts, operation groups
+    descriptions.js  parse a description export; find custom objects lacking one
     charts.js    hbar, columns, egoGraph (D3 SVG charts)
-    views.js     overview, objects, operations, enums
+    views.js     overview, objects, operations, enums, descriptions
     app.js       tabs, file loading, drag and drop, startup
 ```
 

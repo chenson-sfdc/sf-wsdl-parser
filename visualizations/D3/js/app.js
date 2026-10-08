@@ -7,24 +7,28 @@
     ["objects", "Objects & relationships"],
     ["operations", "Operations"],
     ["enums", "Enumerations"],
+    ["descriptions", "Missing descriptions"],
+    ["orgs", "Authenticated orgs"],
   ];
 
-  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [] };
+  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [], descriptions: null, orgs: { phase: "idle", data: null, error: "", busy: "" } };
   const main = document.getElementById("main");
   const tabsNav = document.getElementById("tabs");
   const meta = document.getElementById("meta");
   const fileInput = document.getElementById("file-input");
+  const descInput = document.getElementById("desc-input");
 
   function nav(tab, selectedObject) {
     if (selectedObject) state.objects.selected = selectedObject;
     state.tab = tab;
+    if (tab === "orgs" && state.orgs.phase === "idle") loadOrgs();
     render();
     window.scrollTo(0, 0);
   }
 
   function renderTabs() {
     tabsNav.replaceChildren(...TABS.map(([id, label]) => el("button", {
-      type: "button", text: label, disabled: state.model ? null : "",
+      type: "button", text: label, disabled: state.model || id === "orgs" ? null : "",
       "aria-current": state.tab === id ? "page" : "false",
       onclick: () => nav(id),
     })));
@@ -54,11 +58,13 @@
   function render() {
     renderTabs();
     renderMeta();
+    if (state.tab === "orgs") { main.replaceChildren(App.views.orgs(state.orgs, orgActions)); return; }
     if (!state.model) { main.replaceChildren(emptyState()); return; }
     const m = state.model;
     const view = state.tab === "overview" ? App.views.overview(m, nav)
       : state.tab === "objects" ? App.views.objects(m, state.objects, nav)
       : state.tab === "operations" ? App.views.operations(m)
+      : state.tab === "descriptions" ? App.views.descriptions(m, state.descriptions, nav, () => descInput.click())
       : App.views.enums(m);
     main.replaceChildren(view);
   }
@@ -81,6 +87,60 @@
       render();
     }
   }
+
+  async function loadDescriptions(file) {
+    if (!file) return;
+    try {
+      state.descriptions = App.descriptions.parse(await file.text(), file.name);
+      state.tab = "descriptions";
+    } catch (e) {
+      alert(`Could not read ${file.name}: ${e.message}`);
+    }
+    render();
+  }
+
+  // The orgs API only exists under `wsdlparser serve`; elsewhere the tab explains that.
+  async function orgsCall(path, body) {
+    let r;
+    try {
+      r = await fetch("api/orgs" + path, body === undefined
+        ? { headers: { Accept: "application/json" } }
+        : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    } catch (e) { return { unavailable: true }; }
+    if (!(r.headers.get("Content-Type") || "").includes("application/json")) return { unavailable: true };
+    const json = await r.json();
+    if (!r.ok) throw new Error(json.error || r.statusText);
+    return { data: json };
+  }
+
+  async function orgsRun(path, body, busy) {
+    const o = state.orgs;
+    o.error = ""; o.busy = busy;
+    render();
+    try {
+      const res = await orgsCall(path, body);
+      if (res.unavailable) o.phase = "unavailable";
+      else { o.phase = "ready"; o.data = res.data; }
+    } catch (e) {
+      o.phase = o.data ? "ready" : "error";
+      o.error = e.message;
+    } finally {
+      o.busy = "";
+      render();
+    }
+  }
+
+  function loadOrgs() {
+    state.orgs.phase = "loading";
+    return orgsRun("", undefined, "");
+  }
+
+  const orgActions = {
+    refresh: loadOrgs,
+    add: (alias, instanceUrl) => orgsRun("/login", { alias, instanceUrl }, "login"),
+    remove: (username) => orgsRun("/logout", { username }, "remove"),
+    setDefault: (username) => orgsRun("/default", { username }, "default"),
+  };
 
   // A file-like object whose contents come from the embedded server (wsdlparser serve).
   function serverFile(name) {
@@ -107,6 +167,7 @@
 
   document.getElementById("load-btn").addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => { loadFile(fileInput.files[0]); fileInput.value = ""; });
+  descInput.addEventListener("change", () => { loadDescriptions(descInput.files[0]); descInput.value = ""; });
   document.getElementById("theme-btn").addEventListener("click", () => { App.theme.cycle(); });
 
   window.addEventListener("dragover", (e) => { e.preventDefault(); main.firstElementChild?.classList.add("drag"); });

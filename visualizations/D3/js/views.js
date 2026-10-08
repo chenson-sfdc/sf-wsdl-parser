@@ -215,5 +215,103 @@
     ]);
   }
 
-  App.views = { overview, objects, operations, enums };
+  // Custom objects lacking a description. `map` is the loaded description export
+  // (Map of API name -> text) or null; `pick` opens the file chooser for one.
+  function descriptions(m, map, nav, pick) {
+    const D = App.descriptions;
+    const custom = m.objs.filter((o) => o.kind === "Custom object");
+    if (!map) {
+      return el("div", { class: "empty" }, [
+        el("h2", { text: "Load object descriptions" }),
+        el("p", { text: `The WSDL does not carry descriptions, so they come from a separate export. ${fmtInt(custom.length)} custom objects will be checked against it.` }),
+        el("p", { class: "meta", text: "Accepts a .csv or .json with an API-name column (QualifiedApiName, ApiName, FullName, or DeveloperName) and a Description column." }),
+        el("pre", { class: "snippet", text: "sf data query --use-tooling-api --result-format csv \\\n  -q \"SELECT QualifiedApiName, Description FROM EntityDefinition WHERE QualifiedApiName LIKE '%__c'\" > descriptions.csv" }),
+        el("button", { class: "btn", type: "button", text: "Choose descriptions file…", onclick: pick }),
+      ]);
+    }
+
+    const a = D.analyze(m, map);
+    const pct = custom.length ? Math.round((a.described / custom.length) * 100) : 0;
+    const kpis = el("div", { class: "grid kpis" }, [
+      kpi("Custom objects", fmtInt(custom.length), "checked against the export"),
+      kpi("Described", fmtInt(a.described), `${pct}% coverage`),
+      kpi("Lacking a description", fmtInt(a.lacking.length), `${fmtInt(a.blank)} blank · ${fmtInt(a.missing)} not in export`),
+      kpi("Unmatched export rows", fmtInt(a.unmatched), "no custom object in the WSDL"),
+    ]);
+
+    const statusData = [
+      { key: D.STATUS.described, value: a.described },
+      { key: D.STATUS.blank, value: a.blank },
+      { key: D.STATUS.missing, value: a.missing },
+    ];
+    const statusDiv = el("div");
+    App.charts.hbar(statusDiv, statusData, { label: "objects", labelWidth: 130, rowH: 34, ariaLabel: "Custom objects by description status" });
+
+    const bins = [
+      ["1–9", 1, 9], ["10–24", 10, 24], ["25–49", 25, 49], ["50–99", 50, 99], ["100+", 100, Infinity],
+    ].map(([label, lo, hi]) => ({ label, value: a.lacking.filter((r) => r.obj.nFields >= lo && r.obj.nFields <= hi).length }));
+    const histDiv = el("div");
+    App.charts.columns(histDiv, bins, { xLabel: "fields per object", yLabel: "objects lacking a description", ariaLabel: "Undocumented objects by field count" });
+
+    // Big objects without a description are the most costly to leave undocumented.
+    const topData = a.lacking.slice().sort((x, y) => y.obj.nFields - x.obj.nFields).slice(0, 15)
+      .map((r) => ({ key: r.obj.name, value: r.obj.nFields }));
+    const topDiv = el("div");
+    App.charts.hbar(topDiv, topData, { label: "fields", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Largest objects lacking a description" });
+
+    const q = el("input", { type: "search", placeholder: "Filter custom objects…", "aria-label": "Filter custom objects" });
+    const sel = el("select", { "aria-label": "Description status" }, [
+      el("option", { value: "lacking", text: `Lacking a description (${fmtInt(a.lacking.length)})` }),
+      el("option", { value: D.STATUS.blank, text: `Blank description (${fmtInt(a.blank)})` }),
+      el("option", { value: D.STATUS.missing, text: `Not in export (${fmtInt(a.missing)})` }),
+      el("option", { value: D.STATUS.described, text: `Has description (${fmtInt(a.described)})` }),
+      el("option", { value: "all", text: `All custom objects (${fmtInt(custom.length)})` }),
+    ]);
+    const count = el("span", { class: "meta" });
+    const holder = el("div");
+    let shown = [];
+    const draw = () => {
+      const s = q.value.trim().toLowerCase();
+      shown = a.rows.filter((r) => (sel.value === "all" || (sel.value === "lacking" ? r.status !== D.STATUS.described : r.status === sel.value))
+        && (!s || r.obj.name.toLowerCase().includes(s)))
+        .sort((x, y) => y.obj.nFields - x.obj.nFields || (x.obj.name < y.obj.name ? -1 : 1));
+      count.textContent = `${fmtInt(shown.length)} of ${fmtInt(a.rows.length)}`;
+      holder.replaceChildren(table([
+        { label: "Object", get: (r) => el("a", { href: "#", text: r.obj.name, onclick: (e) => { e.preventDefault(); nav("objects", r.obj.name); } }), mono: true },
+        { label: "Status", get: (r) => el("span", { class: "chip" + (r.status === D.STATUS.described ? "" : " warn"), text: r.status }) },
+        { label: "Fields", num: true, get: (r) => r.obj.nFields },
+        { label: "Description", get: (r) => r.text },
+      ], shown, { maxHeight: 560 }));
+    };
+    q.addEventListener("input", debounce(draw, 120));
+    sel.addEventListener("change", draw);
+    draw();
+
+    const download = el("button", {
+      class: "btn small", type: "button", text: "Download as CSV",
+      onclick: () => {
+        const url = URL.createObjectURL(new Blob([D.toCSV(shown)], { type: "text/csv" }));
+        const link = el("a", { href: url, download: "custom-objects-lacking-description.csv" });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      },
+    });
+    const change = el("button", { class: "btn small", type: "button", text: "Load a different file…", onclick: pick });
+
+    return el("div", {}, [
+      kpis,
+      el("div", { class: "grid cols-2" }, [
+        card("Description coverage", "Custom objects (__c) by whether the export gives them a description", withTable(statusDiv, keyCols("Status", "Objects"), statusData)),
+        card("Undocumented objects by size", "Fields per object, for objects lacking a description", withTable(histDiv, keyCols("Bin", "Objects"), bins.map((b) => ({ key: b.label, value: b.value })))),
+        card("Largest undocumented objects", "Click a bar to open the object", withTable(topDiv, keyCols("Object", "Fields"), topData)),
+      ]),
+      el("div", { style: "height:16px" }),
+      card("Custom objects", "Sorted by field count. The table follows the filters, and the CSV download does too.",
+        el("div", {}, [el("div", { class: "filters" }, [q, sel, count, download, change]), holder])),
+    ]);
+  }
+
+  App.views = { overview, objects, operations, enums, descriptions };
 })(window.App);

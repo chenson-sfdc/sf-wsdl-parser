@@ -25,7 +25,9 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 - **`internal/wsdl/model.go`** (164 lines) — `BuildModel(def)` to extract sObjects, enums, operations.
 
 **Embedded web server packages:**
-- **`internal/server/server.go`** (125 lines) — HTTP handler: serves the embedded SPA plus `/api/files` and `/api/model`.
+- **`internal/server/orgs.go`** (309 lines) — CLI wrappers (`execSF`, `sfJSON`), endpoints for listing/logging-in/logging-out, single-org auto-default, CSRF guards.
+- **`internal/server/orgs_test.go`** (274 lines) — fakeSF mock runner, tests for list/remove/login/default-set, CSRF, error handling, secrets filtering.
+- **`internal/server/server.go`** (138 lines) — HTTP handler: serves the embedded SPA plus `/api/files` and `/api/model`.
 - **`visualizations/D3/embed.go`** (9 lines) — `go:embed` of the SPA files. **Required for the Go build** (the binary imports it); the SPA files it embeds (`index.html`, `css`, `js`, `vendor`) must therefore be present too.
 
 **Output formatting package:**
@@ -67,9 +69,11 @@ All of these are required for the app to load:
 - **`visualizations/D3/js/util.js`** (107 lines) — `App` namespace, DOM helper `el`, cards, tooltip, theme, debounce.
 - **`visualizations/D3/js/parser.js`** (150 lines) — browser-side WSDL XML and `wsdlparser` JSON parsing.
 - **`visualizations/D3/js/model.js`** (119 lines) — derives kinds, relationship edges, type and operation groupings.
+- **`visualizations/D3/js/orgs.js`** (85 lines) — reads from the embedded server's `/api/orgs`, renders a D3 table of authenticated orgs, and drives the login/logout/default-set form.
+- **`visualizations/D3/js/descriptions.js`** (106 lines) — parses a CSV/JSON description export and finds custom objects lacking a description.
 - **`visualizations/D3/js/charts.js`** (191 lines) — bar, column, and relationship-graph charts.
-- **`visualizations/D3/js/views.js`** (219 lines) — Overview, Objects, Operations, and Enumerations views.
-- **`visualizations/D3/js/app.js`** (95 lines) — tabs, file loading, drag and drop, startup.
+- **`visualizations/D3/js/views.js`** (360+ lines) — Overview, Objects, Operations, Enumerations, Missing descriptions, and Authenticated orgs views.
+- **`visualizations/D3/js/app.js`** (138 lines) — tabs, file loading, drag and drop, startup.
 
 Script order in `index.html` matters (`util.js` first, `app.js` last); when adding a
 file, load it after the modules it uses.
@@ -171,6 +175,7 @@ visualizations/D3/            (the SPA; embedded into the binary by embed.go)
     util.js
     parser.js
     model.js
+    descriptions.js
     charts.js
     views.js
     app.js
