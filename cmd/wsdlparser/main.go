@@ -147,7 +147,8 @@ func writeJSONReport(path string, model *wsdl.Model) error {
 	if path == "-" {
 		return report.WriteJSON(os.Stdout, model)
 	}
-	f, err := os.Create(path)
+	// 0600: the report lists the org's full schema.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("creating JSON output file: %w", err)
 	}

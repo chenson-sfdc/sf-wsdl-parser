@@ -56,6 +56,11 @@ func runServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", *addr, err)
 	}
+	// "localhost" is resolved by name, so it could be mapped to a LAN address.
+	if err := boundToLoopback(ln); err != nil {
+		ln.Close()
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -71,6 +76,9 @@ func serve(ctx context.Context, ln net.Listener, root string, out io.Writer, ope
 	srv := &http.Server{
 		Handler:           server.Handler(root, d3.FS),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Requests inherit ctx, so Ctrl+C also cancels an in-flight sf call
+		// (a login can wait minutes) instead of stalling the shutdown.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 	url := "http://" + ln.Addr().String() + "/"
 	fmt.Fprintf(out, "Serving the Enterprise WSDL Explorer at %s\nWSDL files are read from %s\nPress Ctrl+C to stop.\n", url, root+string(os.PathSeparator)+"wsdl")
@@ -88,7 +96,10 @@ func serve(ctx context.Context, ln net.Listener, root string, out io.Writer, ope
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdown)
+		if err := srv.Shutdown(shutdown); err != nil {
+			srv.Close() // stragglers after the grace period are a normal stop
+		}
+		return nil
 	}
 }
 
@@ -105,6 +116,13 @@ func requireLoopback(addr string) error {
 		return nil
 	}
 	return fmt.Errorf("-addr %q is not a loopback address; the server only listens on localhost", addr)
+}
+
+func boundToLoopback(ln net.Listener) error {
+	if a, ok := ln.Addr().(*net.TCPAddr); ok && a.IP.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("refusing to serve on %s: it is not a loopback address", ln.Addr())
 }
 
 func openBrowser(url string) error {

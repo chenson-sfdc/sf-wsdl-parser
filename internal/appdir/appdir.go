@@ -34,14 +34,14 @@ func Root() (string, error) {
 // root is made with os.Mkdir rather than MkdirAll so the existence check and
 // creation are a single atomic step.
 func Create(root string) error {
-	if err := os.Mkdir(root, 0o755); err != nil {
+	if err := os.Mkdir(root, 0o700); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return &ExistsError{Path: root}
 		}
 		return err
 	}
 	for _, c := range Children {
-		if err := os.Mkdir(filepath.Join(root, c), 0o755); err != nil {
+		if err := os.Mkdir(filepath.Join(root, c), 0o700); err != nil {
 			os.RemoveAll(root) // root was created by this call and holds nothing else
 			return err
 		}
@@ -72,7 +72,7 @@ func Ensure(root string) (*EnsureResult, error) {
 		case err == nil:
 			return res, fmt.Errorf("%s exists and is not a directory", p)
 		case errors.Is(err, os.ErrNotExist):
-			if err := os.Mkdir(p, 0o755); err != nil {
+			if err := os.Mkdir(p, 0o700); err != nil {
 				return res, err
 			}
 			res.Created = append(res.Created, p)

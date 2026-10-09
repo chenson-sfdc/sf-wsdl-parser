@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 const miniWSDL = `<?xml version="1.0"?>
@@ -156,5 +157,66 @@ func TestOnlyGET(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status %d, want 405", rec.Code)
+	}
+}
+
+func TestFilesAndModelRefuseCrossSite(t *testing.T) {
+	h, _ := setup(t)
+	for _, target := range []string{"/api/files", "/api/model?file=org.wsdl"} {
+		req := httptest.NewRequest("GET", target, nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: status %d, want 403", target, rec.Code)
+		}
+	}
+}
+
+func TestModelIsCachedUntilFileChanges(t *testing.T) {
+	h, root := setup(t)
+	path := filepath.Join(root, "wsdl", "org.wsdl")
+	first := get(h, "/api/model?file=org.wsdl", "127.0.0.1:1").Body.String()
+
+	// Same size and mtime: a re-parse would see the corrupted bytes and fail.
+	fi, _ := os.Stat(path)
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", int(fi.Size()))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	os.Chtimes(path, fi.ModTime(), fi.ModTime())
+	if got := get(h, "/api/model?file=org.wsdl", "127.0.0.1:1"); got.Code != 200 || got.Body.String() != first {
+		t.Errorf("unchanged file was re-parsed: status %d", got.Code)
+	}
+
+	// A new mtime invalidates the entry.
+	later := fi.ModTime().Add(time.Hour)
+	os.Chtimes(path, later, later)
+	if got := get(h, "/api/model?file=org.wsdl", "127.0.0.1:1"); got.Code != 422 {
+		t.Errorf("changed file: status %d, want 422 from the re-parse", got.Code)
+	}
+}
+
+func TestModelRejectsOversizedFile(t *testing.T) {
+	h, _ := setup(t)
+	old := maxWSDLBytes
+	maxWSDLBytes = 10
+	defer func() { maxWSDLBytes = old }()
+	if rec := get(h, "/api/model?file=org.wsdl", "127.0.0.1:1"); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status %d, want 413", rec.Code)
+	}
+}
+
+func TestAcceptsAnyLoopbackLiteralHost(t *testing.T) {
+	h, _ := setup(t)
+	for _, host := range []string{"127.0.0.2:8765", "[::1]:8765", "127.1.2.3"} {
+		if rec := get(h, "/api/files", host); rec.Code != 200 {
+			t.Errorf("host %q: status %d, want 200", host, rec.Code)
+		}
+	}
+	for _, host := range []string{"128.0.0.1:1", "0.0.0.0:1", "127.0.0.1.evil.example:1"} {
+		if rec := get(h, "/api/files", host); rec.Code != http.StatusForbidden {
+			t.Errorf("host %q: status %d, want 403", host, rec.Code)
+		}
 	}
 }

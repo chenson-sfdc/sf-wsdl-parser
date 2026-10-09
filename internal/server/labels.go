@@ -52,22 +52,10 @@ func (s *server) restJSON(ctx context.Context, path string, target string) (json
 func (s *server) labels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), labelsTimeout)
 	defer cancel()
-	list, err := s.snapshot(ctx)
-	if err != nil {
-		writeError(w, err)
+	target, ok := s.defaultTarget(ctx, w)
+	if !ok {
 		return
 	}
-	var def *org
-	for i := range list.Orgs {
-		if list.Orgs[i].Username == list.Default {
-			def = &list.Orgs[i]
-		}
-	}
-	if def == nil {
-		badRequest(w, noDefaultOrgMsg)
-		return
-	}
-	target := targetOrg(*def)
 	body, err := s.restJSON(ctx, "/services/data/latest/sobjects", target)
 	if err != nil {
 		writeError(w, err)
