@@ -11,7 +11,7 @@
     ["orgs", "Authenticated orgs"],
   ];
 
-  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [], descriptions: null, descSource: null, descLoad: { busy: false, error: "" }, orgs: { phase: "idle", data: null, error: "", busy: "" } };
+  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [], descriptions: null, descSource: null, descLoad: { busy: false, error: "" }, orgs: { phase: "idle", data: null, error: "", busy: "" }, labelSource: null };
   const main = document.getElementById("main");
   const tabsNav = document.getElementById("tabs");
   const meta = document.getElementById("meta");
@@ -80,10 +80,36 @@
       state.fileName = file.name;
       state.objects = { selected: state.model.byName.has("Account") ? "Account" : state.model.objs[0].name };
       state.tab = "overview";
+      applyLabels();
+      loadLabels();
     } catch (e) {
       state.error = `Could not read ${file.name}: ${e.message}`;
     } finally {
       state.loading = false;
+      render();
+    }
+  }
+
+  // The WSDL carries no object-level label (only field values literally named
+  // Label/MasterLabel on Custom Metadata Types), so labels come from the
+  // default org's global describe when one is available. Swaps api name for
+  // label everywhere the model is shown; falls back to the api name otherwise.
+  function applyLabels() {
+    if (!state.model) return;
+    state.model.labelFor = (name) => (state.labels && state.labels.get(name)) || name;
+  }
+
+  async function loadLabels() {
+    try {
+      const res = await orgsCall("/labels", {});
+      if (res.unavailable) return;
+      state.labels = new Map(Object.entries(res.data.labels).map(([name, l]) => [name, l.label]));
+      state.labelSource = { org: res.data.org };
+    } catch (e) {
+      // Silent: no default org, no CLI, or the org call failed. Api names stand in.
+      return;
+    } finally {
+      applyLabels();
       render();
     }
   }

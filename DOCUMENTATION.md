@@ -309,6 +309,8 @@ beyond the local machine.
 | **Enumerations** | The 15 largest enums and a table of every enum with its values. |
 | **Missing descriptions** | Which custom objects (`__c`) lack a description, checked against a separately loaded export (see below). KPI tiles for coverage; a coverage bar chart; undocumented objects by size; the 15 largest undocumented objects (click to open); and a filterable table with a CSV download of the current selection. |
 
+Every tab that names an object (Overview's largest/most-referenced charts, Objects & relationships, Missing descriptions) shows its label instead of its API name once labels are available — see [Object labels](#object-labels).
+
 Every chart has a **View as table** twin. The **Theme** button cycles auto,
 light, and dark; the choice is stored in `localStorage` under `wsdl-theme`.
 
@@ -366,6 +368,47 @@ Only custom objects are checked; standard objects, custom metadata, and
 platform events are out of scope. `js/descriptions.js` holds the parsing and
 analysis; `views.descriptions` renders it.
 
+### Object labels
+
+The WSDL has no object-level label — only field values literally named
+`Label`/`MasterLabel` on Custom Metadata Type (`__mdt`) records, which are
+record data, not sObject metadata — so, like descriptions, labels come from
+the default org.
+
+Unlike descriptions, this isn't a button: once a WSDL is loaded, `app.js`
+fetches labels automatically in the background, with no user action and
+nothing blocked on it. If the fetch succeeds, every view that names an object
+switches from the API name to its label — Overview's "Largest objects" and
+"Most referenced objects" charts, the Objects & relationships list, detail
+KPI, relationship graph and table, and the Missing descriptions table and
+search — while the API name keeps doing the actual work (lookups, routing,
+sorting, CSV export, the `nav()` target). If there's no default org, no `sf`
+CLI, or the app is running from `file://` (no embedded server), the fetch is
+skipped or fails silently and API names are shown, exactly as before this
+feature existed.
+
+The server endpoint is `POST /api/orgs/labels` (same guards as the other
+mutating endpoints — same-origin, `application/json`, 4KB body cap). It takes
+the default org chosen on the Authenticated orgs tab (alias, or username when
+it has none) and makes one call:
+
+```bash
+sf api request rest /services/data/latest/sobjects --target-org <alias>
+```
+
+This is a global describe: one REST call returns every object's `label` and
+`labelPlural` in the org (tested at 3,000+ objects in a few seconds), which is
+why it's used instead of a per-object describe. `latest` is used for the API
+version so the server never needs to know the org's specific version. The
+endpoint returns `{org, labels: {"<ApiName>": {label, labelPlural}, ...}}` and
+answers 400 when no default org is set. A non-2xx HTTP response from the org
+(e.g. a 404) is distinguished from a true CLI/auth failure and surfaced as a
+descriptive error rather than silently treated as success — `sf api request
+rest` reports both the same way at its top level. `internal/server/labels.go`
+holds the handler; `js/app.js`'s `loadLabels`/`applyLabels` wire it into the
+model as `m.labelFor(name)`, which every view calls for display and falls
+back to returning `name` unchanged until labels arrive (or if they never do).
+
 ### Authenticated orgs
 
 The **Authenticated orgs** tab is driven by the embedded server's `/api/orgs` endpoints, which call the Salesforce CLI (`sf auth list`, `sf org login web`, etc.) and manage the `target-org` config. The browser never runs `sf` itself — it just has a UI for it.
@@ -415,7 +458,7 @@ visualizations/D3/
     descriptions.js  parse a description export; find custom objects lacking one
     charts.js    hbar, columns, egoGraph (D3 SVG charts)
     views.js     overview, objects, operations, enums, descriptions
-    app.js       tabs, file loading, drag and drop, startup
+    app.js       tabs, file loading, drag and drop, startup, automatic label fetch
 ```
 
 Modules attach to a shared `window.App` object rather than using ES modules,
@@ -449,6 +492,9 @@ internal/report/
   report.go         terminal summary and JSON writer
 internal/server/
   server.go         HTTP handler: embedded SPA + /api/files, /api/model
+  orgs.go           /api/orgs endpoints: list/login/logout/set-default via sf
+  descriptions.go   /api/orgs/descriptions: custom objects + Tooling API descriptions
+  labels.go         /api/orgs/labels: every object's label via one global describe
 visualizations/D3/  browser SPA (see Enterprise WSDL Explorer above)
   embed.go          go:embed of the SPA files, used by `serve`
 ```

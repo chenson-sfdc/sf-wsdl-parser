@@ -127,6 +127,19 @@ with a `QualifiedApiName` and a `Description` column). The tab reports how many
 custom objects have a description and how many are missing one, charts the
 undocumented objects by size, and lists them with a CSV download. See [DOCUMENTATION.md](DOCUMENTATION.md#missing-descriptions).
 
+### Object labels instead of API names
+
+The WSDL carries no object-level label either (field values literally named
+`Label`/`MasterLabel` exist only on Custom Metadata Type records, not as
+sObject metadata), so under `wsdlparser serve`, once a WSDL is loaded, the app
+automatically fetches every object's label from the default org with a single
+global describe call (`sf api request rest /services/data/latest/sobjects`)
+and swaps the API name for the label everywhere an object is shown — charts,
+tables, the object detail view, and search — on the Overview, Objects &
+relationships, and Missing descriptions tabs. If there's no default org, no
+`sf` CLI, or no embedded server (`file://` access), the API name is shown
+as-is; nothing in the app blocks on this fetch. See [DOCUMENTATION.md](DOCUMENTATION.md#object-labels).
+
 ### Repairing the application directory
 
 ```bash

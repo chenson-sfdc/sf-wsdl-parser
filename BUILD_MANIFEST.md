@@ -25,15 +25,17 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 - **`internal/wsdl/model.go`** (164 lines) — `BuildModel(def)` to extract sObjects, enums, operations.
 
 **Embedded web server packages:**
-- **`internal/server/orgs.go`** (309 lines) — CLI wrappers (`execSF`, `sfJSON`), endpoints for listing/logging-in/logging-out, single-org auto-default, CSRF guards.
-- **`internal/server/orgs_test.go`** (274 lines) — fakeSF mock runner, tests for list/remove/login/default-set, CSRF, error handling, secrets filtering.
-- **`internal/server/server.go`** (138 lines) — HTTP handler: serves the embedded SPA plus `/api/files` and `/api/model`.
+- **`internal/server/orgs.go`** (370 lines) — CLI wrappers (`execSF`, `sfJSON`), endpoints for listing/logging-in/logging-out, single-org auto-default, CSRF guards.
+- **`internal/server/descriptions.go`** (140 lines) — `POST /api/orgs/descriptions`: lists custom objects (`sf sobject list`) and reads each one's Description from the Tooling API.
+- **`internal/server/labels.go`** (92 lines) — `POST /api/orgs/labels`: every object's label via one global describe (`sf api request rest /services/data/latest/sobjects`).
+- **`internal/server/orgs_test.go`** (525 lines) — fakeSF mock runner, tests for list/remove/login/default-set/descriptions/labels, CSRF, error handling, secrets filtering.
+- **`internal/server/server.go`** (139 lines) — HTTP handler: serves the embedded SPA plus `/api/files`, `/api/model`, and the `/api/orgs/*` routes.
 - **`visualizations/D3/embed.go`** (9 lines) — `go:embed` of the SPA files. **Required for the Go build** (the binary imports it); the SPA files it embeds (`index.html`, `css`, `js`, `vendor`) must therefore be present too.
 
 **Output formatting package:**
 - **`internal/report/report.go`** (74 lines) — terminal summary and JSON writer.
 
-**Total:** 9 source files, 922 lines of code (excluding tests).
+**Total:** 11 source files, 1,692 lines of code (excluding tests).
 
 **Application directory (used by `build.sh` and the `doctor` subcommand):**
 - **`build.sh`** (9 lines) — runs `go run ./cmd/initapp`, then `go build`; halts if the directory exists.
@@ -68,13 +70,12 @@ All of these are required for the app to load:
 - **`visualizations/D3/vendor/d3.LICENSE`** — D3's ISC license; keep it alongside `d3.min.js`.
 - **`visualizations/D3/js/util.js`** (107 lines) — `App` namespace, DOM helper `el`, cards, tooltip, theme, debounce.
 - **`visualizations/D3/js/parser.js`** (150 lines) — browser-side WSDL XML and `wsdlparser` JSON parsing.
-- **`visualizations/D3/js/model.js`** (119 lines) — derives kinds, relationship edges, type and operation groupings.
-- **`internal/server/descriptions.go`** — `POST /api/orgs/descriptions`: runs `sf sobject list --sobject custom --target-org <alias|username>` for the default org, then reads each object's Description from the Tooling API's EntityDefinition. Feeds the Missing descriptions tab's "Get descriptions from default org" button.
-- **`visualizations/D3/js/orgs.js`** (85 lines) — reads from the embedded server's `/api/orgs`, renders a D3 table of authenticated orgs, and drives the login/logout/default-set form.
+- **`visualizations/D3/js/model.js`** (122 lines) — derives kinds, relationship edges, type and operation groupings; exposes `labelFor(name)`, overridden once org labels arrive.
+- **`visualizations/D3/js/orgs.js`** (102 lines) — reads from the embedded server's `/api/orgs`, renders a D3 table of authenticated orgs, and drives the login/logout/default-set form.
 - **`visualizations/D3/js/descriptions.js`** (106 lines) — parses a CSV/JSON description export and finds custom objects lacking a description.
-- **`visualizations/D3/js/charts.js`** (191 lines) — bar, column, and relationship-graph charts.
-- **`visualizations/D3/js/views.js`** (360+ lines) — Overview, Objects, Operations, Enumerations, Missing descriptions, and Authenticated orgs views.
-- **`visualizations/D3/js/app.js`** (138 lines) — tabs, file loading, drag and drop, startup.
+- **`visualizations/D3/js/charts.js`** (193 lines) — bar, column, and relationship-graph charts; `hbar`'s `keyLabel` and `egoGraph`'s `labelFor` format object names for display without changing the underlying key.
+- **`visualizations/D3/js/views.js`** (341 lines) — Overview, Objects, Operations, Enumerations, Missing descriptions, and Authenticated orgs views.
+- **`visualizations/D3/js/app.js`** (234 lines) — tabs, file loading, drag and drop, startup, and the automatic `/api/orgs/labels` fetch that feeds `model.labelFor`.
 
 Script order in `index.html` matters (`util.js` first, `app.js` last); when adding a
 file, load it after the modules it uses.
@@ -151,6 +152,10 @@ internal/
   server/
     server.go
     server_test.go
+    orgs.go
+    orgs_test.go
+    descriptions.go
+    labels.go
   appdir/
     appdir.go
     appdir_test.go
@@ -179,12 +184,13 @@ visualizations/D3/            (the SPA; embedded into the binary by embed.go)
     descriptions.js
     charts.js
     views.js
+    orgs.js
     app.js
 ```
 
 ## Size reference
 
-- **Total source:** 1,818 lines of Go code (including 742 lines of tests).
+- **Total source:** 2,959 lines of Go code (1,692 non-test, 1,267 tests).
 - **go.mod:** 4 KB.
 - **go.sum:** 4 KB.
 - **Typical binary size:** ~10–12 MB (unstripped), ~3–4 MB (stripped with `go build -ldflags="-s -w"`).
