@@ -217,27 +217,45 @@
 
   // Custom objects lacking a description. `map` is the loaded description export
   // (Map of API name -> text) or null; `pick` opens the file chooser for one.
-  function descriptions(m, map, nav, pick) {
+  // `live` runs the same lookup against the default org (see app.js).
+  function descriptions(m, map, source, nav, pick, live) {
     const D = App.descriptions;
     const custom = m.objs.filter((o) => o.kind === "Custom object");
+    const fromOrg = el("button", {
+      class: "btn" + (map ? " small" : ""), type: "button", disabled: live.load.busy ? "" : null, onclick: live.run,
+      text: live.load.busy ? "Reading the default org…" : map ? "Refresh from default org" : "Get descriptions from default org",
+    });
+    const fromOrgNote = [
+      live.load.error ? el("p", { class: "error", role: "alert", text: live.load.error }) : null,
+      live.load.busy ? el("p", { class: "meta", text: "Listing custom objects and reading their descriptions. This can take a little while for large orgs." }) : null,
+    ];
     if (!map) {
       return el("div", { class: "empty" }, [
         el("h2", { text: "Load object descriptions" }),
-        el("p", { text: `The WSDL does not carry descriptions, so they come from a separate export. ${fmtInt(custom.length)} custom objects will be checked against it.` }),
+        el("p", { text: `The WSDL does not carry descriptions, so they come from the default org or from a separate export. ${fmtInt(custom.length)} custom objects will be checked.` }),
+        el("p", { class: "meta", text: "Runs sf sobject list --sobject custom for the default org chosen on the Authenticated orgs tab (its alias, or its username when it has none), then reads each object's Description." }),
+        fromOrg,
+        ...fromOrgNote,
+        el("p", { class: "meta", text: "Or load an export:" }),
         el("p", { class: "meta", text: "Accepts a .csv or .json with an API-name column (QualifiedApiName, ApiName, FullName, or DeveloperName) and a Description column." }),
         el("pre", { class: "snippet", text: "sf data query --use-tooling-api --result-format csv \\\n  -q \"SELECT QualifiedApiName, Description FROM EntityDefinition WHERE QualifiedApiName LIKE '%__c'\" > descriptions.csv" }),
         el("button", { class: "btn", type: "button", text: "Choose descriptions file…", onclick: pick }),
       ]);
     }
 
+    const fromOrgSource = !!source && source.kind === "org";
     const a = D.analyze(m, map);
     const pct = custom.length ? Math.round((a.described / custom.length) * 100) : 0;
     const kpis = el("div", { class: "grid kpis" }, [
-      kpi("Custom objects", fmtInt(custom.length), "checked against the export"),
-      kpi("Described", fmtInt(a.described), `${pct}% coverage`),
-      kpi("Lacking a description", fmtInt(a.lacking.length), `${fmtInt(a.blank)} blank · ${fmtInt(a.missing)} not in export`),
-      kpi("Unmatched export rows", fmtInt(a.unmatched), "no custom object in the WSDL"),
+      kpi("Custom objects", fmtInt(custom.length), "in the WSDL, checked for a description"),
+      kpi("With a description", fmtInt(a.described), `${pct}% coverage`),
+      kpi("Missing a description", fmtInt(a.lacking.length), `${fmtInt(a.blank)} blank · ${fmtInt(a.missing)} not in ${fromOrgSource ? "the org" : "the export"}`),
+      kpi(fromOrgSource ? "Org-only objects" : "Unmatched export rows", fmtInt(a.unmatched), "no custom object in the WSDL"),
     ]);
+    const src = source;
+    const sourceLine = el("p", { class: "meta", text: !src ? "" : src.kind === "org"
+      ? `From the default org (${src.org}): ${fmtInt(src.count)} custom objects listed by \`${src.command}\`.`
+      : `From the file ${src.name}.` });
 
     const statusData = [
       { key: D.STATUS.described, value: a.described },
@@ -298,18 +316,20 @@
         URL.revokeObjectURL(url);
       },
     });
-    const change = el("button", { class: "btn small", type: "button", text: "Load a different file…", onclick: pick });
+    const change = el("button", { class: "btn small", type: "button", text: "Load a file instead…", onclick: pick });
 
     return el("div", {}, [
+      sourceLine,
       kpis,
+      ...fromOrgNote,
       el("div", { class: "grid cols-2" }, [
-        card("Description coverage", "Custom objects (__c) by whether the export gives them a description", withTable(statusDiv, keyCols("Status", "Objects"), statusData)),
+        card("Description coverage", "Custom objects (__c) by whether the description source gives them one", withTable(statusDiv, keyCols("Status", "Objects"), statusData)),
         card("Undocumented objects by size", "Fields per object, for objects lacking a description", withTable(histDiv, keyCols("Bin", "Objects"), bins.map((b) => ({ key: b.label, value: b.value })))),
         card("Largest undocumented objects", "Click a bar to open the object", withTable(topDiv, keyCols("Object", "Fields"), topData)),
       ]),
       el("div", { style: "height:16px" }),
       card("Custom objects", "Sorted by field count. The table follows the filters, and the CSV download does too.",
-        el("div", {}, [el("div", { class: "filters" }, [q, sel, count, download, change]), holder])),
+        el("div", {}, [el("div", { class: "filters" }, [q, sel, count, download, fromOrg, change]), holder])),
     ]);
   }
 

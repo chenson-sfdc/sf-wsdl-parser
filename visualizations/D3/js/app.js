@@ -11,7 +11,7 @@
     ["orgs", "Authenticated orgs"],
   ];
 
-  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [], descriptions: null, orgs: { phase: "idle", data: null, error: "", busy: "" } };
+  const state = { model: null, tab: "overview", objects: {}, error: "", loading: false, serverFiles: [], descriptions: null, descSource: null, descLoad: { busy: false, error: "" }, orgs: { phase: "idle", data: null, error: "", busy: "" } };
   const main = document.getElementById("main");
   const tabsNav = document.getElementById("tabs");
   const meta = document.getElementById("meta");
@@ -64,7 +64,7 @@
     const view = state.tab === "overview" ? App.views.overview(m, nav)
       : state.tab === "objects" ? App.views.objects(m, state.objects, nav)
       : state.tab === "operations" ? App.views.operations(m)
-      : state.tab === "descriptions" ? App.views.descriptions(m, state.descriptions, nav, () => descInput.click())
+      : state.tab === "descriptions" ? App.views.descriptions(m, state.descriptions, state.descSource, nav, () => descInput.click(), orgDescriptions)
       : App.views.enums(m);
     main.replaceChildren(view);
   }
@@ -92,6 +92,8 @@
     if (!file) return;
     try {
       state.descriptions = App.descriptions.parse(await file.text(), file.name);
+      state.descSource = { kind: "file", name: file.name };
+      state.descLoad.error = "";
       state.tab = "descriptions";
     } catch (e) {
       alert(`Could not read ${file.name}: ${e.message}`);
@@ -129,6 +131,28 @@
       render();
     }
   }
+
+  // Descriptions straight from the default org: the server lists its custom
+  // objects (sf sobject list) and looks up each Description. Needs the server.
+  const orgDescriptions = {
+    get load() { return state.descLoad; },
+    async run() {
+      const d = state.descLoad;
+      d.busy = true; d.error = "";
+      render();
+      try {
+        const res = await orgsCall("/descriptions", {});
+        if (res.unavailable) throw new Error("This needs the embedded server, because only it can run the Salesforce CLI. Start it with `wsdlparser serve`.");
+        state.descriptions = new Map(res.data.objects.map((o) => [o.name, o.description]));
+        state.descSource = { kind: "org", org: res.data.org, command: res.data.command, count: res.data.objects.length };
+      } catch (e) {
+        d.error = e.message;
+      } finally {
+        d.busy = false;
+        render();
+      }
+    },
+  };
 
   function loadOrgs() {
     state.orgs.phase = "loading";

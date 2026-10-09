@@ -316,9 +316,30 @@ light, and dark; the choice is stored in `localStorage` under `wsdl-theme`.
 
 The WSDL declares no description for an sObject (its only `documentation`
 elements are on operations and enumeration values), so this view needs a
-second file listing each object's description. Load it from the tab itself
-(**Choose descriptions file…**) after a WSDL is loaded. It is read in the
-browser and never uploaded; the Go server is not involved.
+second source for each object's description. There are two.
+
+**From the default org** (needs `wsdlparser serve` and the `sf` CLI). Click
+**Get descriptions from default org**. The server takes the default org chosen
+on the Authenticated orgs tab and runs
+
+```bash
+sf sobject list --sobject custom --target-org <alias>
+```
+
+using the org's alias, or its username when it has none. It then reads each
+listed object's `Description` from the Tooling API's `EntityDefinition`
+(`sf data query --use-tooling-api`, in batches of 200 names). `describeSObjects`
+is not used: neither the SOAP nor the REST describe result carries an object's
+description. The summary reports how many custom objects have a description and
+how many are missing one (blank, or not returned by the org). The endpoint is
+`POST /api/orgs/descriptions` (same guards as the other mutating endpoints). It
+only reads, and returns `{org, command, objects: [{name, description}]}`. It
+answers 400 when no default org is set. Listed names must look like `Name__c`
+before they are put into the query.
+
+**From a file.** Load it from the tab (**Choose descriptions file…**) after a
+WSDL is loaded. It is read in the browser and never uploaded; the Go server is
+not involved.
 
 Accepted formats, matched by file extension and content:
 
