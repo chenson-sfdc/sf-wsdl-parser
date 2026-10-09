@@ -27,8 +27,10 @@
   }
 
   // Horizontal bar chart. data: [{key, value, note?}]. Single series, single color.
+  // keyLabel formats d.key for display (row labels, tooltip, aria-label) while
+  // d.key itself stays the stable identifier used for the scale and onClick.
   function hbar(container, data, opts = {}) {
-    const { width = 520, label = "value", color = "var(--series-1)", onClick, labelWidth = 170, rowH = 28, fmt = fmtInt, tipExtra } = opts;
+    const { width = 520, label = "value", color = "var(--series-1)", onClick, labelWidth = 170, rowH = 28, fmt = fmtInt, tipExtra, keyLabel = (k) => k } = opts;
     const m = { top: 4, right: 56, bottom: 22, left: labelWidth };
     const height = m.top + m.bottom + data.length * rowH;
     const x = d3.scaleLinear([0, d3.max(data, (d) => d.value) || 1], [0, width - m.left - m.right]).nice(4);
@@ -49,14 +51,14 @@
     const thick = Math.min(24, y.bandwidth() - 6);
     rows.append("text").attr("class", "row-label").attr("x", m.left - 8).attr("y", (d) => y(d.key) + y.bandwidth() / 2)
       .attr("dy", "0.35em").attr("text-anchor", "end")
-      .text((d) => (d.key.length > labelWidth / 6.6 ? d.key.slice(0, Math.floor(labelWidth / 6.6) - 1) + "…" : d.key));
+      .text((d) => { const t = keyLabel(d.key); return t.length > labelWidth / 6.6 ? t.slice(0, Math.floor(labelWidth / 6.6) - 1) + "…" : t; });
     rows.append("path").attr("class", "bar").attr("fill", color)
       .attr("d", (d) => barPath(m.left, y(d.key) + (y.bandwidth() - thick) / 2, Math.max(x(d.value), 2), thick, 4, true));
     rows.append("text").attr("class", "value-label").attr("x", (d) => m.left + x(d.value) + 6)
       .attr("y", (d) => y(d.key) + y.bandwidth() / 2).attr("dy", "0.35em").text((d) => fmt(d.value));
     const hit = rows.append("rect").attr("class", "hit").attr("x", 0).attr("y", (d) => y(d.key))
-      .attr("width", width).attr("height", y.bandwidth()).attr("aria-label", (d) => `${d.key}: ${fmt(d.value)} ${label}`);
-    attachHover(hit, (d) => [d.key, { value: fmt(d.value), label: " " + label }, ...(tipExtra ? tipExtra(d) : [])], onClick);
+      .attr("width", width).attr("height", y.bandwidth()).attr("aria-label", (d) => `${keyLabel(d.key)}: ${fmt(d.value)} ${label}`);
+    attachHover(hit, (d) => [keyLabel(d.key), { value: fmt(d.value), label: " " + label }, ...(tipExtra ? tipExtra(d) : [])], onClick);
     hit.style("cursor", onClick ? "pointer" : "default");
 
     container.replaceChildren(svg.node());
@@ -97,7 +99,7 @@
 
   // Ego network around one sObject: center, objects it references, objects that reference it.
   function egoGraph(container, model, centerName, opts = {}) {
-    const { width = 760, height = 520, onSelect, maxPerSide = 40 } = opts;
+    const { width = 760, height = 520, onSelect, maxPerSide = 40, labelFor = (n) => n } = opts;
     const out = (model.outbound.get(centerName) || []).slice();
     const inn = (model.inbound.get(centerName) || []).slice();
     const outShown = out.slice(0, maxPerSide);
@@ -124,7 +126,7 @@
     const roleName = { center: "Selected object", out: "References", in: "Referenced by" };
 
     const svg = d3.create("svg").attr("viewBox", [0, 0, width, height]).attr("width", width).attr("height", height)
-      .attr("role", "group").attr("aria-label", `Relationships of ${centerName}`);
+      .attr("role", "group").attr("aria-label", `Relationships of ${labelFor(centerName)}`);
     const link = svg.append("g").selectAll("line").data(links).join("line").attr("class", "link");
     const node = svg.append("g").selectAll("g").data(nodeArr).join("g");
 
@@ -133,10 +135,10 @@
       .attr("stroke", "var(--surface-1)").attr("stroke-width", 2);
     node.append("text").attr("class", "node-label").attr("x", (d) => (d.role === "center" ? 0 : 10))
       .attr("y", (d) => (d.role === "center" ? -14 : 0)).attr("dy", "0.35em")
-      .attr("text-anchor", (d) => (d.role === "center" ? "middle" : "start")).text((d) => d.id);
+      .attr("text-anchor", (d) => (d.role === "center" ? "middle" : "start")).text((d) => labelFor(d.id));
     const hit = node.append("circle").attr("r", 14).attr("class", "hit");
     attachHover(hit, (d) => {
-      const lines = [d.id, roleName[d.role] + (d.both ? " (and references back)" : "")];
+      const lines = [labelFor(d.id), roleName[d.role] + (d.both ? " (and references back)" : "")];
       const o = model.byName.get(d.id);
       if (o) lines.push({ value: fmtInt(o.nFields), label: " fields" });
       for (const l of links) {

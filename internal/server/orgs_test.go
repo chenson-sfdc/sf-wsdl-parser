@@ -21,9 +21,11 @@ type fakeSF struct {
 	target   string
 	calls    [][]string
 	missing  bool
-	failNext string            // substring of the command that should fail, once
-	objects  []string          // custom objects `sobject list` returns
-	descs    map[string]string // EntityDefinition descriptions by API name
+	failNext string               // substring of the command that should fail, once
+	objects  []string             // custom objects `sobject list` returns
+	descs    map[string]string    // EntityDefinition descriptions by API name
+	labels   map[string][2]string // name -> [label, labelPlural], for the global describe
+	restCode int                  // HTTP status `api request rest` should report; 0 means 200
 }
 
 func (f *fakeSF) run(ctx context.Context, args ...string) ([]byte, error) {
@@ -75,6 +77,17 @@ func (f *fakeSF) run(ctx context.Context, args ...string) ([]byte, error) {
 			}
 		}
 		return enc(map[string]any{"status": 0, "result": map[string]any{"records": recs}}), nil
+	case strings.HasPrefix(cmd, "api request rest"):
+		code := f.restCode
+		if code == 0 {
+			code = 200
+		}
+		var sobjects []map[string]any
+		for name, lp := range f.labels {
+			sobjects = append(sobjects, map[string]any{"name": name, "label": lp[0], "labelPlural": lp[1]})
+		}
+		body := map[string]any{"sobjects": sobjects}
+		return enc(map[string]any{"status": 0, "result": map[string]any{"statusCode": code, "body": body}}), nil
 	case strings.HasPrefix(cmd, "org login web"):
 		f.orgs = append(f.orgs, testOrg("new@example.com", "new"))
 		return enc(map[string]any{"status": 0, "result": map[string]any{}}), nil
@@ -426,5 +439,87 @@ func TestDescriptionsSFErrorIsSurfaced(t *testing.T) {
 	rec := post(orgsHandler(f), "/api/orgs/descriptions", `{}`)
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "boom from sf") {
 		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func labelsOf(t *testing.T, rec *httptest.ResponseRecorder) labelsResult {
+	t.Helper()
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var r labelsResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestLabelsUsesDefaultOrgAlias(t *testing.T) {
+	f := &fakeSF{
+		orgs:   []map[string]any{testOrg("a@x.com", "alpha"), testOrg("b@x.com", "")},
+		target: "alpha",
+		labels: map[string][2]string{
+			"Account": {"Organization", "Organizations"},
+			"One__c":  {"One", "Ones"},
+		},
+	}
+	r := labelsOf(t, post(orgsHandler(f), "/api/orgs/labels", `{}`))
+	if r.Org != "alpha" {
+		t.Errorf("org %q", r.Org)
+	}
+	if !f.ran("api request rest /services/data/latest/sobjects --target-org=alpha --json") {
+		t.Errorf("calls %v", f.calls)
+	}
+	if r.Labels["Account"] != (label{Label: "Organization", LabelPlural: "Organizations"}) {
+		t.Errorf("Account label %+v", r.Labels["Account"])
+	}
+	if r.Labels["One__c"] != (label{Label: "One", LabelPlural: "Ones"}) {
+		t.Errorf("One__c label %+v", r.Labels["One__c"])
+	}
+}
+
+func TestLabelsFallsBackToUsername(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "alpha"), testOrg("b@x.com", "")}, target: "b@x.com"}
+	if r := labelsOf(t, post(orgsHandler(f), "/api/orgs/labels", `{}`)); r.Org != "b@x.com" {
+		t.Errorf("org %q, want the username", r.Org)
+	}
+}
+
+func TestLabelsNeedsDefaultOrg(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a"), testOrg("b@x.com", "b")}}
+	rec := post(orgsHandler(f), "/api/orgs/labels", `{}`)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "No default org") {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+	if f.ran("api request rest") {
+		t.Error("fetched labels without a default org")
+	}
+}
+
+func TestLabelsHTTPErrorIsSurfaced(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a")}, target: "a", restCode: 404}
+	rec := post(orgsHandler(f), "/api/orgs/labels", `{}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "404") {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestLabelsSFErrorIsSurfaced(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a")}, target: "a", failNext: "api request rest"}
+	rec := post(orgsHandler(f), "/api/orgs/labels", `{}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "boom from sf") {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestLabelsRequireSameOriginJSON(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a")}, target: "a"}
+	req := httptest.NewRequest("POST", "/api/orgs/labels", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	orgsHandler(f).ServeHTTP(rec, req)
+	if rec.Code != 415 {
+		t.Errorf("status %d, want 415", rec.Code)
 	}
 }

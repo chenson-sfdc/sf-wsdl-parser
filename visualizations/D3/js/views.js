@@ -65,18 +65,22 @@
 
     const topData = m.topByFields.slice(0, 15).map((o) => ({ key: o.name, value: o.nFields }));
     const topDiv = el("div");
-    App.charts.hbar(topDiv, topData, { label: "fields", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Objects with most fields" });
+    App.charts.hbar(topDiv, topData, { label: "fields", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Objects with most fields", keyLabel: m.labelFor });
 
     const refData = m.topReferenced.slice(0, 15).map((o) => ({ key: o.name, value: o.value }));
     const refDiv = el("div");
-    App.charts.hbar(refDiv, refData, { label: "objects point here", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Most referenced objects" });
+    App.charts.hbar(refDiv, refData, { label: "objects point here", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Most referenced objects", keyLabel: m.labelFor });
 
+    const labelCols = (label, vlabel) => [
+      { label, get: (d) => m.labelFor(d.key) },
+      { label: vlabel, num: true, get: (d) => d.value },
+    ];
     const grid = el("div", { class: "grid cols-2" }, [
       card("Objects by kind", "Inferred from name suffixes (__c, __mdt, __e) and companions such as __History", withTable(kindDiv, keyCols("Kind", "Objects"), m.kindCounts)),
       card("Fields per object", "Most objects are small; a few permission objects have 900+ fields", withTable(histDiv, keyCols("Bin", "Objects"), bins.map((b) => ({ key: b.label, value: b.value })))),
       card("Field types", "Relationship fields are grouped; Id and primitive types are shown as declared", withTable(typeDiv, keyCols("Type", "Fields"), m.types.slice(0, 40))),
-      card("Largest objects", "Click a bar to open the object", withTable(topDiv, keyCols("Object", "Fields"), topData)),
-      card("Most referenced objects", "Distinct objects holding a typed lookup to the target. Click a bar to open it", withTable(refDiv, keyCols("Object", "Referenced by"), refData)),
+      card("Largest objects", "Click a bar to open the object", withTable(topDiv, labelCols("Object", "Fields"), topData)),
+      card("Most referenced objects", "Distinct objects holding a typed lookup to the target. Click a bar to open it", withTable(refDiv, labelCols("Object", "Referenced by"), refData)),
     ]);
     return el("div", {}, [kpis, grid]);
   }
@@ -105,7 +109,7 @@
     function renderList() {
       state.query = search.value; state.kind = kindSel.value; state.sort = sortSel.value;
       const q = search.value.trim().toLowerCase();
-      let rows = m.objs.filter((o) => (!q || o.name.toLowerCase().includes(q)) && (!kindSel.value || o.kind === kindSel.value));
+      let rows = m.objs.filter((o) => (!q || o.name.toLowerCase().includes(q) || m.labelFor(o.name).toLowerCase().includes(q)) && (!kindSel.value || o.kind === kindSel.value));
       const cmp = { name: (a, b) => (a.name < b.name ? -1 : 1), fields: (a, b) => b.nFields - a.nFields || (a.name < b.name ? -1 : 1), inbound: (a, b) => inboundN(b) - inboundN(a) || (a.name < b.name ? -1 : 1) }[sortSel.value];
       rows.sort(cmp);
       count.textContent = `${fmtInt(rows.length)} of ${fmtInt(m.objs.length)}`;
@@ -113,7 +117,7 @@
       list.replaceChildren(...shown.map((o) => el("li", {}, [el("button", {
         type: "button", "aria-current": String(o.name === state.selected),
         onclick: () => { state.selected = o.name; renderList(); renderDetail(); },
-      }, [el("span", { text: o.name }), el("span", { class: "count", text: sortSel.value === "inbound" ? inboundN(o) : o.nFields })])])));
+      }, [el("span", { text: m.labelFor(o.name) }), el("span", { class: "count", text: sortSel.value === "inbound" ? inboundN(o) : o.nFields })])])));
       if (rows.length > shown.length) list.append(el("li", { class: "meta", text: `Showing first ${shown.length}; refine the filter.` }));
     }
 
@@ -126,7 +130,7 @@
       const out = m.outbound.get(o.name) || [];
       const inn = m.inbound.get(o.name) || [];
       const graphDiv = el("div", { class: "graph-card" });
-      App.charts.egoGraph(graphDiv, m, o.name, { onSelect: (n) => { state.selected = n; renderList(); renderDetail(); } });
+      App.charts.egoGraph(graphDiv, m, o.name, { onSelect: (n) => { state.selected = n; renderList(); renderDetail(); }, labelFor: m.labelFor });
 
       const fieldRows = o.fields;
       const fq = el("input", { type: "search", placeholder: "Filter fields…", "aria-label": "Filter fields" });
@@ -136,7 +140,7 @@
         const rows = fieldRows.filter((f) => !q || f.Name.toLowerCase().includes(q) || f.Type.toLowerCase().includes(q));
         holder.replaceChildren(table([
           { label: "Field", get: (f) => f.Name, mono: true },
-          { label: "Type", get: (f) => (m.byName.has(f.Type) ? el("a", { href: "#", text: f.Type, onclick: (e) => { e.preventDefault(); state.selected = f.Type; renderList(); renderDetail(); } }) : f.Type) },
+          { label: "Type", get: (f) => (m.byName.has(f.Type) ? el("a", { href: "#", text: m.labelFor(f.Type), onclick: (e) => { e.preventDefault(); state.selected = f.Type; renderList(); renderDetail(); } }) : f.Type) },
           { label: "Flags", get: (f) => el("span", {}, [f.Nillable ? el("span", { class: "chip", text: "nillable" }) : null, f.Optional ? el("span", { class: "chip", text: "optional" }) : null, f.Repeated ? el("span", { class: "chip", text: "repeated" }) : null]) },
         ], rows, { maxHeight: 420 }));
       };
@@ -149,7 +153,7 @@
       ];
       detail.replaceChildren(
         el("div", { class: "grid kpis" }, [
-          kpi(o.kind, o.name, `${fmtInt(o.nFields)} fields`),
+          kpi(o.kind, m.labelFor(o.name), `${fmtInt(o.nFields)} fields`),
           kpi("References", fmtInt(out.length), "distinct objects"),
           kpi("Referenced by", fmtInt(inn.length), "distinct objects"),
           kpi("Child relationships", fmtInt(o.nChild), "QueryResult fields"),
@@ -160,7 +164,7 @@
         el("div", { style: "height:16px" }),
         relRows.length ? card("Relationship table", null, table([
           { label: "Direction", get: (r) => r.dir },
-          { label: "Object", get: (r) => el("a", { href: "#", text: r.other, onclick: (e) => { e.preventDefault(); state.selected = r.other; renderList(); renderDetail(); } }) },
+          { label: "Object", get: (r) => el("a", { href: "#", text: m.labelFor(r.other), onclick: (e) => { e.preventDefault(); state.selected = r.other; renderList(); renderDetail(); } }) },
           { label: "Via fields", get: (r) => r.fields, mono: true },
         ], relRows, { maxHeight: 320 })) : null,
       );
@@ -275,7 +279,7 @@
     const topData = a.lacking.slice().sort((x, y) => y.obj.nFields - x.obj.nFields).slice(0, 15)
       .map((r) => ({ key: r.obj.name, value: r.obj.nFields }));
     const topDiv = el("div");
-    App.charts.hbar(topDiv, topData, { label: "fields", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Largest objects lacking a description" });
+    App.charts.hbar(topDiv, topData, { label: "fields", labelWidth: 190, onClick: (d) => nav("objects", d.key), ariaLabel: "Largest objects lacking a description", keyLabel: m.labelFor });
 
     const q = el("input", { type: "search", placeholder: "Filter custom objects…", "aria-label": "Filter custom objects" });
     const sel = el("select", { "aria-label": "Description status" }, [
@@ -291,11 +295,11 @@
     const draw = () => {
       const s = q.value.trim().toLowerCase();
       shown = a.rows.filter((r) => (sel.value === "all" || (sel.value === "lacking" ? r.status !== D.STATUS.described : r.status === sel.value))
-        && (!s || r.obj.name.toLowerCase().includes(s)))
+        && (!s || r.obj.name.toLowerCase().includes(s) || m.labelFor(r.obj.name).toLowerCase().includes(s)))
         .sort((x, y) => y.obj.nFields - x.obj.nFields || (x.obj.name < y.obj.name ? -1 : 1));
       count.textContent = `${fmtInt(shown.length)} of ${fmtInt(a.rows.length)}`;
       holder.replaceChildren(table([
-        { label: "Object", get: (r) => el("a", { href: "#", text: r.obj.name, onclick: (e) => { e.preventDefault(); nav("objects", r.obj.name); } }), mono: true },
+        { label: "Object", get: (r) => el("a", { href: "#", text: m.labelFor(r.obj.name), onclick: (e) => { e.preventDefault(); nav("objects", r.obj.name); } }), mono: true },
         { label: "Status", get: (r) => el("span", { class: "chip" + (r.status === D.STATUS.described ? "" : " warn"), text: r.status }) },
         { label: "Fields", num: true, get: (r) => r.obj.nFields },
         { label: "Description", get: (r) => r.text },

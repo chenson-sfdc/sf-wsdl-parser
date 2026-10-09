@@ -112,6 +112,9 @@
         .map((o) => ({ name: o.name, kind: o.kind, value: (inbound.get(o.name) || []).length }))
         .filter((d) => d.value > 0)
         .sort((a, b) => b.value - a.value),
+      // Overridden once the default org's labels arrive (see app.js); until
+      // then, and whenever they are unavailable, the API name is shown as-is.
+      labelFor: (name) => name,
     };
   }
 
