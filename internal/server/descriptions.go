@@ -106,22 +106,10 @@ func (s *server) describe(ctx context.Context, target string, names []string) ([
 func (s *server) descriptions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), descTimeout)
 	defer cancel()
-	list, err := s.snapshot(ctx)
-	if err != nil {
-		writeError(w, err)
+	target, ok := s.defaultTarget(ctx, w)
+	if !ok {
 		return
 	}
-	var def *org
-	for i := range list.Orgs {
-		if list.Orgs[i].Username == list.Default {
-			def = &list.Orgs[i]
-		}
-	}
-	if def == nil {
-		badRequest(w, noDefaultOrgMsg)
-		return
-	}
-	target := targetOrg(*def)
 	names, err := s.customObjects(ctx, target)
 	if err != nil {
 		writeError(w, err)

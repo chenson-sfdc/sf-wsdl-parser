@@ -32,6 +32,7 @@ var (
 const (
 	cliTimeout   = 30 * time.Second
 	loginTimeout = 5 * time.Minute // the user finishes logging in at their own pace
+	maxSF        = 4               // concurrent sf processes; each is a Node start-up
 )
 
 // sfError is a failure reported by sf itself, as opposed to a failure to run it.
@@ -65,6 +66,12 @@ func jsonBody(out []byte) []byte {
 // sfJSON runs `sf <args> --json` and returns the "result" member. Failures
 // reported by sf come back as *sfError carrying its own message.
 func (s *server) sfJSON(ctx context.Context, args ...string) (json.RawMessage, error) {
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	out, runErr := s.sf(ctx, append(args, "--json")...)
 	if errors.Is(runErr, exec.ErrNotFound) {
 		return nil, errSFMissing
@@ -165,16 +172,21 @@ func (s *server) snapshot(ctx context.Context) (*orgList, error) {
 			}
 		}
 	}
-	// With a single org there is nothing to choose between, so make it the
-	// default if it isn't already. Best effort: the list is still correct if
-	// this fails, it just won't show a default.
-	if len(list.Orgs) == 1 && list.Default == "" {
-		only := list.Orgs[0].Username
-		if _, err := s.sfJSON(ctx, "config", "set", "target-org", only, "--global"); err == nil {
-			list.Default = only
-		}
-	}
 	return list, nil
+}
+
+// ensureDefault makes a lone org the default if nothing else is, since there
+// is nothing to choose between. Best effort: the list is still correct if this
+// fails, it just won't show a default. It writes the CLI's global config, so
+// the caller must hold s.mu; snapshot itself never writes.
+func (s *server) ensureDefault(ctx context.Context, list *orgList) {
+	if len(list.Orgs) != 1 || list.Default != "" {
+		return
+	}
+	only := list.Orgs[0].Username
+	if _, err := s.sfJSON(ctx, "config", "set", "target-org", only, "--global"); err == nil {
+		list.Default = only
+	}
 }
 
 func writeError(w http.ResponseWriter, err error) {
@@ -200,12 +212,33 @@ func badRequest(w http.ResponseWriter, msg string) {
 func (s *server) orgs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), cliTimeout)
 	defer cancel()
-	list, err := s.snapshot(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reply(ctx, w)
+}
+
+// sameOrigin refuses a request that a browser says came from another site.
+// Origin is compared when sent; Sec-Fetch-Site covers requests, such as an
+// <img> load, that carry no Origin.
+func sameOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
+		return false
 	}
-	writeJSON(w, list)
+	site := r.Header.Get("Sec-Fetch-Site")
+	return site == "" || site == "same-origin" || site == "none"
+}
+
+// readGuarded is guarded's counterpart for GET endpoints. Reads change
+// nothing, but any web page could still make the browser fire them in bulk
+// and start a CLI process or a large parse each time.
+func readGuarded(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "cross-origin request refused", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
 }
 
 // guarded protects endpoints that change state. Any web page can make the
@@ -219,11 +252,7 @@ func guarded(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "content type must be application/json", http.StatusUnsupportedMediaType)
 			return
 		}
-		if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
-			http.Error(w, "cross-origin request refused", http.StatusForbidden)
-			return
-		}
-		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		if !sameOrigin(r) {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}
@@ -352,19 +381,49 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	s.reply(ctx, w)
 }
 
-// reply sends the current list after a change.
+// reply sends the current list, after applying the lone-org default. The
+// caller holds s.mu.
 func (s *server) reply(ctx context.Context, w http.ResponseWriter) {
 	list, err := s.snapshot(ctx)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	s.ensureDefault(ctx, list)
 	writeJSON(w, list)
+}
+
+func newOrgState(sf sfRunner) orgState {
+	return orgState{sf: sf, slots: make(chan struct{}, maxSF)}
 }
 
 // orgState is embedded in server.
 type orgState struct {
 	sf        sfRunner
-	mu        sync.Mutex  // serialises changes to the CLI's stored auth and config
-	loggingIn atomic.Bool // at most one browser login at a time
+	slots     chan struct{} // bounds concurrent sf processes
+	mu        sync.Mutex    // serialises changes to the CLI's stored auth and config
+	loggingIn atomic.Bool   // at most one browser login at a time
+}
+
+// defaultTarget returns the CLI target (alias, else username) of the default
+// org, making a lone org the default first. The lock covers only the config
+// read and write, not the slow call the caller goes on to make. When there is
+// no default it writes the 400 itself and returns ok == false.
+func (s *server) defaultTarget(ctx context.Context, w http.ResponseWriter) (string, bool) {
+	s.mu.Lock()
+	list, err := s.snapshot(ctx)
+	if err == nil {
+		s.ensureDefault(ctx, list)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		writeError(w, err)
+		return "", false
+	}
+	def, ok := known(list, list.Default)
+	if !ok {
+		badRequest(w, noDefaultOrgMsg)
+		return "", false
+	}
+	return targetOrg(def), true
 }

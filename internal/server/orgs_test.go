@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -267,7 +268,7 @@ func TestLoginValidatesInput(t *testing.T) {
 
 func TestLoginOneAtATime(t *testing.T) {
 	f := &fakeSF{}
-	srv := &server{orgState: orgState{sf: f.run}}
+	srv := &server{orgState: newOrgState(f.run)}
 	srv.loggingIn.Store(true) // a login is already in flight
 	rec := httptest.NewRecorder()
 	srv.login(rec, httptest.NewRequest("POST", "/api/orgs/login", strings.NewReader(`{}`)))
@@ -521,5 +522,107 @@ func TestLabelsRequireSameOriginJSON(t *testing.T) {
 	orgsHandler(f).ServeHTTP(rec, req)
 	if rec.Code != 415 {
 		t.Errorf("status %d, want 415", rec.Code)
+	}
+}
+
+func getWith(h http.Handler, target string, hdr map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("GET", target, nil)
+	req.Host = "127.0.0.1:8765"
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestReadsRefuseCrossSite(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("only@x.com", "")}}
+	h := orgsHandler(f)
+	for _, hdr := range []map[string]string{
+		{"Sec-Fetch-Site": "cross-site"},
+		{"Sec-Fetch-Site": "same-site"},
+		{"Origin": "http://evil.example"},
+		{"Origin": "null"},
+	} {
+		if rec := getWith(h, "/api/orgs", hdr); rec.Code != http.StatusForbidden {
+			t.Errorf("%v: status %d, want 403", hdr, rec.Code)
+		}
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("refused requests still ran sf: %v", f.calls)
+	}
+	for _, hdr := range []map[string]string{
+		nil, {"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "none"}, {"Origin": "http://127.0.0.1:8765"},
+	} {
+		if rec := getWith(h, "/api/orgs", hdr); rec.Code != 200 {
+			t.Errorf("%v: status %d, want 200", hdr, rec.Code)
+		}
+	}
+}
+
+func TestListingOrgsDoesNotWriteConfigWithoutTheLock(t *testing.T) {
+	// snapshot is read-only: only ensureDefault, called with s.mu held, writes.
+	f := &fakeSF{orgs: []map[string]any{testOrg("only@x.com", "")}}
+	srv := &server{orgState: newOrgState(f.run)}
+	if _, err := srv.snapshot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.ran("config set") {
+		t.Error("snapshot wrote config")
+	}
+}
+
+func TestSFConcurrencyIsCapped(t *testing.T) {
+	var cur, peak int32
+	var mu sync.Mutex
+	gate := make(chan struct{})
+	run := func(ctx context.Context, args ...string) ([]byte, error) {
+		mu.Lock()
+		cur++
+		if cur > peak {
+			peak = cur
+		}
+		mu.Unlock()
+		<-gate
+		mu.Lock()
+		cur--
+		mu.Unlock()
+		return []byte(`{"status":0,"result":[]}`), nil
+	}
+	srv := &server{orgState: newOrgState(run)}
+	var wg sync.WaitGroup
+	for i := 0; i < 3*maxSF; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srv.sfJSON(context.Background(), "auth", "list")
+		}()
+	}
+	for { // wait until the cap is reached, then let everything drain
+		mu.Lock()
+		n := cur
+		mu.Unlock()
+		if n == maxSF {
+			break
+		}
+		runtime.Gosched()
+	}
+	close(gate)
+	wg.Wait()
+	if peak > maxSF {
+		t.Errorf("%d sf processes at once, cap is %d", peak, maxSF)
+	}
+}
+
+func TestSFWaitHonoursContext(t *testing.T) {
+	srv := &server{orgState: newOrgState(func(context.Context, ...string) ([]byte, error) { return nil, nil })}
+	for i := 0; i < maxSF; i++ {
+		srv.slots <- struct{}{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := srv.sfJSON(ctx, "auth", "list"); err == nil {
+		t.Error("expected an error when the context ends while waiting for a slot")
 	}
 }

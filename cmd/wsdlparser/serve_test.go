@@ -73,3 +73,24 @@ func TestServeRejectsArgs(t *testing.T) {
 		t.Error("expected an error for a non-loopback address")
 	}
 }
+
+func TestBoundToLoopback(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := boundToLoopback(ln); err != nil {
+		t.Errorf("loopback listener refused: %v", err)
+	}
+	if err := boundToLoopback(fakeAddrListener{ln, &net.TCPAddr{IP: net.IPv4(192, 168, 1, 5), Port: 1}}); err == nil {
+		t.Error("a LAN address was accepted")
+	}
+}
+
+type fakeAddrListener struct {
+	net.Listener
+	addr net.Addr
+}
+
+func (f fakeAddrListener) Addr() net.Addr { return f.addr }

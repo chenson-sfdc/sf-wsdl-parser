@@ -35,9 +35,11 @@
   }
 
   function renderMeta() {
+    if (state.loading) { meta.textContent = `Loading ${state.loadingName}…`; return; }
     if (!state.model) { meta.textContent = "No file loaded"; return; }
     const r = state.model.raw;
-    const parts = [r.ServiceName, r.ApiVersion && `API v${r.ApiVersion}`, state.fileName, r.Generated && `generated ${r.Generated}`].filter(Boolean);
+    const parts = [r.ServiceName, r.ApiVersion && `API v${r.ApiVersion}`, state.fileName, r.Generated && `generated ${r.Generated}`,
+      state.labelSource && `labels from ${state.labelSource.org}`].filter(Boolean);
     meta.textContent = parts.join(" · ");
   }
 
@@ -69,24 +71,33 @@
     main.replaceChildren(view);
   }
 
+  // Each load and each label fetch takes a number; only the newest may apply
+  // its result, so a slow earlier request can't overwrite a later one.
+  let loadSeq = 0, labelSeq = 0;
+
   async function loadFile(file) {
     if (!file) return;
-    state.error = ""; state.loading = true; state.model = null;
-    render();
+    const seq = ++loadSeq;
+    state.error = ""; state.loading = true; state.loadingName = file.name;
+    if (!state.model) render(); else renderMeta();
     try {
       const raw = await App.parser.parseFile(file);
+      if (seq !== loadSeq) return;
       if (!raw.SObjects.length) throw new Error("No sObjects found. Is this an Enterprise WSDL?");
-      state.model = App.model.build(raw);
+      const model = App.model.build(raw);
+      state.model = model;
       state.fileName = file.name;
-      state.objects = { selected: state.model.byName.has("Account") ? "Account" : state.model.objs[0].name };
+      state.objects = { selected: model.byName.has("Account") ? "Account" : model.objs[0].name };
       state.tab = "overview";
       applyLabels();
       loadLabels();
     } catch (e) {
+      if (seq !== loadSeq) return;
+      // Keep any model that was already showing; it is still the user's data.
       state.error = `Could not read ${file.name}: ${e.message}`;
+      if (state.model) alert(state.error);
     } finally {
-      state.loading = false;
-      render();
+      if (seq === loadSeq) { state.loading = false; render(); }
     }
   }
 
@@ -100,8 +111,10 @@
   }
 
   async function loadLabels() {
+    const seq = ++labelSeq;
     try {
       const res = await orgsCall("/labels", {});
+      if (seq !== labelSeq) return;
       if (res.unavailable) return;
       state.labels = new Map(Object.entries(res.data.labels).map(([name, l]) => [name, l.label]));
       state.labelSource = { org: res.data.org };
@@ -109,9 +122,25 @@
       // Silent: no default org, no CLI, or the org call failed. Api names stand in.
       return;
     } finally {
-      applyLabels();
-      render();
+      if (seq === labelSeq) { applyLabels(); render(); }
     }
+  }
+
+  // Labels and org-fetched descriptions belong to one org. When the default
+  // changes (set, login or logout), drop whatever came from another org and
+  // fetch labels again, so a view never shows org A's data under org B.
+  function syncOrgScoped(list) {
+    const def = list.orgs.find((o) => o.username === list.default);
+    const target = def ? (def.alias || def.username) : "";
+    if (state.labelSource && state.labelSource.org !== target) {
+      ++labelSeq; // an in-flight fetch for the old org must not land
+      state.labels = null; state.labelSource = null;
+      applyLabels();
+    }
+    if (state.descSource && state.descSource.kind === "org" && state.descSource.org !== target) {
+      state.descriptions = null; state.descSource = null;
+    }
+    if (target && state.model && !state.labels) loadLabels();
   }
 
   async function loadDescriptions(file) {
@@ -148,7 +177,7 @@
     try {
       const res = await orgsCall(path, body);
       if (res.unavailable) o.phase = "unavailable";
-      else { o.phase = "ready"; o.data = res.data; }
+      else { o.phase = "ready"; o.data = res.data; syncOrgScoped(res.data); }
     } catch (e) {
       o.phase = o.data ? "ready" : "error";
       o.error = e.message;

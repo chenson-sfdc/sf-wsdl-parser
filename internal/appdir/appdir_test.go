@@ -200,3 +200,19 @@ func TestResolveOutput(t *testing.T) {
 		t.Errorf("without a data dir, got %q, want unchanged", got)
 	}
 }
+
+func TestCreateIsPrivate(t *testing.T) {
+	root := filepath.Join(t.TempDir(), Name)
+	if err := Create(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range append([]string{"."}, Children...) {
+		fi, err := os.Stat(filepath.Join(root, c))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm()&0o077 != 0 {
+			t.Errorf("%s is %v; WSDLs and reports describe the org's schema, so it should be owner-only", c, fi.Mode().Perm())
+		}
+	}
+}

@@ -291,11 +291,17 @@ When the page is served this way it fetches `/api/files`, shows a button per
 file, and auto-loads when there is exactly one. Opened from disk (`file://`) the
 fetch fails silently and manual loading works as before.
 
-Safeguards: the listener refuses non-loopback addresses; requests whose `Host`
-header is not `localhost`/`127.0.0.1`/`[::1]` get `403` (blocks DNS rebinding);
-only `GET` is routed; the API reads nothing outside `wsdl/` (names containing
-separators, `..`, or other extensions are rejected); responses carry a
-restrictive `Content-Security-Policy` (`default-src 'self'`), `nosniff`, and
+Safeguards: the listener refuses to start on, or to end up bound to, anything
+but a loopback address; requests whose `Host` header is not `localhost` or a
+loopback IP literal get `403` (blocks DNS rebinding); every `GET /api/*` and
+`POST /api/orgs/*` route rejects a cross-site request (`Origin` /
+`Sec-Fetch-Site`), so another page open in the browser can't drive the CLI or
+read org data; `/api/model` caps the file size it will parse and caches the
+parsed result per file (invalidated on a size/mtime change); concurrent `sf`
+calls are capped, so a burst of requests can't spawn unbounded CLI processes;
+the API reads nothing outside `wsdl/` (names containing separators, `..`, or
+other extensions are rejected); responses carry a restrictive
+`Content-Security-Policy` (`default-src 'self'`), `nosniff`, and
 `no-referrer`. The server has no authentication, which is why it never binds
 beyond the local machine.
 
@@ -408,6 +414,17 @@ rest` reports both the same way at its top level. `internal/server/labels.go`
 holds the handler; `js/app.js`'s `loadLabels`/`applyLabels` wire it into the
 model as `m.labelFor(name)`, which every view calls for display and falls
 back to returning `name` unchanged until labels arrive (or if they never do).
+The meta bar names the org labels came from (e.g. "labels from
+chenson@..."), so it's visible when they're showing.
+
+Labels are scoped to whichever org was default when they were fetched. If the
+default org changes — a different one is picked, a new one logs in, or the
+current default logs out — `app.js`'s `syncOrgScoped` drops any labels and any
+org-fetched descriptions that no longer match, and re-fetches labels for the
+new default. A load already in flight for the old org is also disarmed, so it
+can't land after the switch and show the wrong org's labels. Loading a second
+WSDL file while the first is still parsing has the same kind of guard: each
+load is numbered, and only the newest number's result is applied.
 
 ### Authenticated orgs
 
