@@ -69,6 +69,7 @@ All of these are required for the app to load:
 - **`visualizations/D3/js/util.js`** (107 lines) — `App` namespace, DOM helper `el`, cards, tooltip, theme, debounce.
 - **`visualizations/D3/js/parser.js`** (150 lines) — browser-side WSDL XML and `wsdlparser` JSON parsing.
 - **`visualizations/D3/js/model.js`** (119 lines) — derives kinds, relationship edges, type and operation groupings.
+- **`internal/server/descriptions.go`** — `POST /api/orgs/descriptions`: runs `sf sobject list --sobject custom --target-org <alias|username>` for the default org, then reads each object's Description from the Tooling API's EntityDefinition. Feeds the Missing descriptions tab's "Get descriptions from default org" button.
 - **`visualizations/D3/js/orgs.js`** (85 lines) — reads from the embedded server's `/api/orgs`, renders a D3 table of authenticated orgs, and drives the login/logout/default-set form.
 - **`visualizations/D3/js/descriptions.js`** (106 lines) — parses a CSV/JSON description export and finds custom objects lacking a description.
 - **`visualizations/D3/js/charts.js`** (191 lines) — bar, column, and relationship-graph charts.

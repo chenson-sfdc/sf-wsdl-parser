@@ -46,6 +46,7 @@ func newHandler(root string, assets fs.FS, sf sfRunner) http.Handler {
 	mux.HandleFunc("POST /api/orgs/login", guarded(s.login))
 	mux.HandleFunc("POST /api/orgs/logout", guarded(s.logout))
 	mux.HandleFunc("POST /api/orgs/default", guarded(s.setDefault))
+	mux.HandleFunc("POST /api/orgs/descriptions", guarded(s.descriptions))
 	mux.Handle("GET /", http.FileServerFS(assets))
 	return loopbackOnly(mux)
 }

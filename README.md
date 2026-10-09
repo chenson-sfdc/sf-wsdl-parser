@@ -119,11 +119,13 @@ Click the **Authenticated orgs** tab to list orgs authorized with the Salesforce
 ### Finding custom objects without a description
 
 The WSDL carries no sObject descriptions, so the **Missing descriptions** tab
-checks the custom objects against a separate export that you load from the tab
-(a `.csv` or `.json` with a `QualifiedApiName` and a `Description` column, for
-example from `sf data query --use-tooling-api` on `EntityDefinition`). It
-charts coverage and size of the undocumented objects and lists them with a CSV
-download. See [DOCUMENTATION.md](DOCUMENTATION.md#missing-descriptions).
+gets them elsewhere. Under `wsdlparser serve` its **Get descriptions from
+default org** button runs `sf sobject list --sobject custom` for the default org
+chosen on the Authenticated orgs tab, then reads each object's description from
+the Tooling API. You can also load an export from the tab (a `.csv` or `.json`
+with a `QualifiedApiName` and a `Description` column). The tab reports how many
+custom objects have a description and how many are missing one, charts the
+undocumented objects by size, and lists them with a CSV download. See [DOCUMENTATION.md](DOCUMENTATION.md#missing-descriptions).
 
 ### Repairing the application directory
 

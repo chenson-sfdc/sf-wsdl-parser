@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,7 +21,9 @@ type fakeSF struct {
 	target   string
 	calls    [][]string
 	missing  bool
-	failNext string // substring of the command that should fail, once
+	failNext string            // substring of the command that should fail, once
+	objects  []string          // custom objects `sobject list` returns
+	descs    map[string]string // EntityDefinition descriptions by API name
 }
 
 func (f *fakeSF) run(ctx context.Context, args ...string) ([]byte, error) {
@@ -58,6 +61,20 @@ func (f *fakeSF) run(ctx context.Context, args ...string) ([]byte, error) {
 		}
 		f.orgs = kept
 		return enc(map[string]any{"status": 0, "result": map[string]any{}}), nil
+	case strings.HasPrefix(cmd, "sobject list"):
+		return enc(map[string]any{"status": 0, "result": f.objects}), nil
+	case strings.HasPrefix(cmd, "data query --use-tooling-api"):
+		var recs []map[string]any
+		for name, d := range f.descs {
+			if strings.Contains(cmd, "'"+name+"'") {
+				var v any = d
+				if d == "<null>" {
+					v = nil
+				}
+				recs = append(recs, map[string]any{"QualifiedApiName": name, "Description": v})
+			}
+		}
+		return enc(map[string]any{"status": 0, "result": map[string]any{"records": recs}}), nil
 	case strings.HasPrefix(cmd, "org login web"):
 		f.orgs = append(f.orgs, testOrg("new@example.com", "new"))
 		return enc(map[string]any{"status": 0, "result": map[string]any{}}), nil
@@ -308,5 +325,106 @@ func TestJSONBodySkipsLeadingNotice(t *testing.T) {
 	got := string(jsonBody([]byte("You acknowledge...\n\n{\"status\":0}")))
 	if got != `{"status":0}` {
 		t.Errorf("got %q", got)
+	}
+}
+
+func descriptionsOf(t *testing.T, rec *httptest.ResponseRecorder) descriptionsResult {
+	t.Helper()
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var r descriptionsResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestDescriptionsUsesDefaultOrgAlias(t *testing.T) {
+	f := &fakeSF{
+		orgs:    []map[string]any{testOrg("a@x.com", "alpha"), testOrg("b@x.com", "")},
+		target:  "alpha",
+		objects: []string{"One__c", "Two__c", "Three__c", "bad name", "x'); DROP__c"},
+		descs:   map[string]string{"One__c": "  Documented. ", "Two__c": "", "Three__c": "<null>"},
+	}
+	r := descriptionsOf(t, post(orgsHandler(f), "/api/orgs/descriptions", `{}`))
+	if r.Org != "alpha" || r.Command != "sf sobject list --sobject custom --target-org alpha" {
+		t.Errorf("org %q, command %q", r.Org, r.Command)
+	}
+	if !f.ran("sobject list --sobject custom --target-org=alpha --json") {
+		t.Errorf("calls %v", f.calls)
+	}
+	want := []objectDescription{{"One__c", "Documented."}, {"Two__c", ""}, {"Three__c", ""}}
+	if len(r.Objects) != len(want) {
+		t.Fatalf("objects %+v", r.Objects)
+	}
+	for i, w := range want {
+		if r.Objects[i] != w {
+			t.Errorf("object %d: %+v, want %+v", i, r.Objects[i], w)
+		}
+	}
+	for _, c := range f.calls {
+		if strings.Contains(strings.Join(c, " "), "DROP") {
+			t.Error("an unvalidated name reached sf")
+		}
+	}
+}
+
+func TestDescriptionsFallsBackToUsername(t *testing.T) {
+	f := &fakeSF{
+		orgs:    []map[string]any{testOrg("a@x.com", "alpha"), testOrg("b@x.com", "")},
+		target:  "b@x.com",
+		objects: []string{"One__c"},
+	}
+	if r := descriptionsOf(t, post(orgsHandler(f), "/api/orgs/descriptions", `{}`)); r.Org != "b@x.com" {
+		t.Errorf("org %q, want the username", r.Org)
+	}
+}
+
+func TestDescriptionsNeedsDefaultOrg(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a"), testOrg("b@x.com", "b")}}
+	rec := post(orgsHandler(f), "/api/orgs/descriptions", `{}`)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "No default org") {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+	if f.ran("sobject list") {
+		t.Error("listed objects without a default org")
+	}
+}
+
+func TestDescriptionsBatchesQueries(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a")}, target: "a", descs: map[string]string{}}
+	for i := 0; i < descChunk+5; i++ {
+		f.objects = append(f.objects, "Obj"+strconv.Itoa(i)+"__c")
+	}
+	r := descriptionsOf(t, post(orgsHandler(f), "/api/orgs/descriptions", `{}`))
+	queries := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(strings.Join(c, " "), "data query") {
+			queries++
+		}
+	}
+	if len(r.Objects) != len(f.objects) || queries != 2 {
+		t.Errorf("%d objects, %d queries", len(r.Objects), queries)
+	}
+}
+
+func TestDescriptionsRequireSameOriginJSON(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a")}, target: "a"}
+	req := httptest.NewRequest("POST", "/api/orgs/descriptions", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	orgsHandler(f).ServeHTTP(rec, req)
+	if rec.Code != 415 {
+		t.Errorf("status %d, want 415", rec.Code)
+	}
+}
+
+func TestDescriptionsSFErrorIsSurfaced(t *testing.T) {
+	f := &fakeSF{orgs: []map[string]any{testOrg("a@x.com", "a")}, target: "a", objects: []string{"One__c"}, failNext: "data query"}
+	rec := post(orgsHandler(f), "/api/orgs/descriptions", `{}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "boom from sf") {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
 	}
 }
