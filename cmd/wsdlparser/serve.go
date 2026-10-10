@@ -17,7 +17,7 @@ import (
 
 	"wsdlparser/internal/appdir"
 	"wsdlparser/internal/server"
-	d3 "wsdlparser/visualizations/D3"
+	"wsdlparser/web"
 )
 
 const defaultServeAddr = "127.0.0.1:8765"
@@ -74,7 +74,7 @@ func runServe(args []string) error {
 
 func serve(ctx context.Context, ln net.Listener, root string, out io.Writer, open func(string) error) error {
 	srv := &http.Server{
-		Handler:           server.Handler(root, d3.FS),
+		Handler:           server.Handler(root, web.FS),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Requests inherit ctx, so Ctrl+C also cancels an in-flight sf call
 		// (a login can wait minutes) instead of stalling the shutdown.

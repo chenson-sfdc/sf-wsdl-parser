@@ -29,8 +29,8 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 - **`internal/server/descriptions.go`** (140 lines) — `POST /api/orgs/descriptions`: lists custom objects (`sf sobject list`) and reads each one's Description from the Tooling API.
 - **`internal/server/labels.go`** (92 lines) — `POST /api/orgs/labels`: every object's label via one global describe (`sf api request rest /services/data/latest/sobjects`).
 - **`internal/server/orgs_test.go`** (525 lines) — fakeSF mock runner, tests for list/remove/login/default-set/descriptions/labels, CSRF, error handling, secrets filtering.
-- **`internal/server/server.go`** (139 lines) — HTTP handler: serves the embedded SPA plus `/api/files`, `/api/model`, and the `/api/orgs/*` routes.
-- **`visualizations/D3/embed.go`** (9 lines) — `go:embed` of the SPA files. **Required for the Go build** (the binary imports it); the SPA files it embeds (`index.html`, `css`, `js`, `vendor`) must therefore be present too.
+- **`internal/server/server.go`** (139 lines) — HTTP handler: serves the embedded SPA (with a script-hash CSP) plus `/api/files`, `/api/model`, and the `/api/orgs/*` routes.
+- **`web/embed.go`** — `go:embed` of `web/build/`. **Required for the Go build** (the binary imports it); `web/build/` is generated, not committed, so run `npm ci && npm run build` in `web/` first (`build.sh` does; the committed `web/build/.gitkeep` keeps the directory present).
 
 **Output formatting package:**
 - **`internal/report/report.go`** (74 lines) — terminal summary and JSON writer.
@@ -38,7 +38,7 @@ If starting from a new directory, `go mod init wsdlparser` creates `go.mod`.
 **Total:** 11 source files, 1,692 lines of code (excluding tests).
 
 **Application directory (used by `build.sh` and the `doctor` subcommand):**
-- **`build.sh`** (9 lines) — runs `go run ./cmd/initapp`, then `go build`; halts if the directory exists.
+- **`build.sh`** — builds the web app, runs `go run ./cmd/initapp`, then `go build`; halts if the directory exists.
 - **`cmd/initapp/main.go`** (31 lines) — creates `~/Documents/go-data-discovery/{data,wsdl}`; exits `1` and changes nothing if the root already exists.
 - **`internal/appdir/appdir.go`** (123 lines) — `Root()`, `Create()`, and `Ensure()`; `Create` uses `os.Mkdir` so the existence check and creation are one step, while `Ensure` (used by `doctor.go` above) fills in whatever's missing without failing if the root already exists.
 
@@ -57,34 +57,25 @@ Test files are excluded by the binary build (`go build`), so omitting them doesn
 
 ## Enterprise WSDL Explorer (SPA)
 
-The browser app under `visualizations/D3/` has no package manager, bundler, or
-build step: the files can be opened straight from disk (`file://`) and need no
-Go to run. The Go binary, however, embeds them (`visualizations/D3/embed.go`),
-so `go build` fails if the files listed below are missing.
+The browser app under `web/` is a SvelteKit 3 project built with Node 20+ and
+npm. `npm run build` writes static files to `web/build/`; the Go binary embeds
+them (`web/embed.go`), so `go build` fails if that directory has no build in it.
+Source files:
 
-All of these are required for the app to load:
-
-- **`visualizations/D3/index.html`** — page shell; loads the scripts below in order.
-- **`visualizations/D3/css/styles.css`** (218 lines) — layout, light/dark themes.
-- **`visualizations/D3/vendor/d3.min.js`** — D3 v7.9.0, vendored so the app works offline with no CDN.
-- **`visualizations/D3/vendor/d3.LICENSE`** — D3's ISC license; keep it alongside `d3.min.js`.
-- **`visualizations/D3/js/util.js`** (107 lines) — `App` namespace, DOM helper `el`, cards, tooltip, theme, debounce.
-- **`visualizations/D3/js/parser.js`** (150 lines) — browser-side WSDL XML and `wsdlparser` JSON parsing.
-- **`visualizations/D3/js/model.js`** (122 lines) — derives kinds, relationship edges, type and operation groupings; exposes `labelFor(name)`, overridden once org labels arrive.
-- **`visualizations/D3/js/orgs.js`** (102 lines) — reads from the embedded server's `/api/orgs`, renders a D3 table of authenticated orgs, and drives the login/logout/default-set form.
-- **`visualizations/D3/js/descriptions.js`** (106 lines) — parses a CSV/JSON description export and finds custom objects lacking a description.
-- **`visualizations/D3/js/charts.js`** (193 lines) — bar, column, and relationship-graph charts; `hbar`'s `keyLabel` and `egoGraph`'s `labelFor` format object names for display without changing the underlying key.
-- **`visualizations/D3/js/views.js`** (341 lines) — Overview, Objects, Operations, Enumerations, Missing descriptions, and Authenticated orgs views.
-- **`visualizations/D3/js/app.js`** (234 lines) — tabs, file loading, drag and drop, startup, and the automatic `/api/orgs/labels` fetch that feeds `model.labelFor`.
-
-Script order in `index.html` matters (`util.js` first, `app.js` last); when adding a
-file, load it after the modules it uses.
+- **`web/package.json`, `web/package-lock.json`** — dependencies and scripts (`dev`, `build`, `check`, `test`); the `imports` map defines the `#lib` alias.
+- **`web/vite.config.ts`** — SvelteKit 3 config (hash router, `adapter-static` with `index.html` fallback) and Vitest settings. There is no `svelte.config.js`; Kit 3 rejects it.
+- **`web/tsconfig.json`, `web/src/app.html`, `web/src/app.d.ts`, `web/src/app.css`** — TypeScript config, document shell, design tokens and base styles.
+- **`web/src/lib/wsdl/`** — `parser.ts`, `model.ts`, `descriptions.ts`, `types.ts`, plus `fixture.ts` and `wsdl.test.ts` (Vitest).
+- **`web/src/lib/`** — `explorer.svelte.ts` (app state), `api.ts`, `format.ts`, `chart.ts`, `nav.ts`, `tooltip.svelte.ts`.
+- **`web/src/lib/components/`** — `Card`, `ChartCard`, `DataTable`, `BarChart`, `ColumnChart`, `EgoGraph`, `Kpi`, `ObjectDetail`, `PageHeader`, `Toasts`, `Tooltip`, `Welcome`.
+- **`web/src/routes/`** — `+layout.svelte` (shell) and a `+page.svelte` for each of Overview, `objects`, `operations`, `enums`, `descriptions`, `orgs`.
 
 ## Optional but recommended
 
 - **`README.md`** — quick-start usage.
 - **`DOCUMENTATION.md`** — full reference (JSON schema, API-limit behavior, design, troubleshooting).
-- **`.gitignore`** — contains `/wsdlparser` (the built binary is not committed).
+- **`.gitignore`** — contains `/wsdlparser` (the built binary is not committed) and `/web/build/*` (generated web output).
+- **`.github/workflows/go.yml`** — CI: builds and tests the web app with Node 22, then builds and tests Go.
 
 ## Excluded
 
@@ -96,21 +87,23 @@ file, load it after the modules it uses.
 # Download dependencies (one-time)
 go mod download
 
-# Create ~/Documents/go-data-discovery/{data,wsdl} and build the binary
-# (halts if that directory already exists)
+# Build the web app, create ~/Documents/go-data-discovery/{data,wsdl}, and
+# build the binary (halts if that directory already exists)
 ./build.sh
 
-# Or build the binary only
+# Or build the binary only (web/build/ must already exist)
+(cd web && npm ci && npm run build)
 go build -o wsdlparser ./cmd/wsdlparser
 
 # Run tests (optional)
 go test ./...
+(cd web && npm run check && npm test)
 
 # Check code quality
 go vet ./...
 ```
 
-All of this uses the files listed above; no build configuration files beyond `go.mod` and `go.sum` are needed.
+The Go build needs only `go.mod` and `go.sum` plus a built `web/build/`; building that needs the web files listed above.
 
 ## Minimum viable rebuild from scratch
 
@@ -118,7 +111,7 @@ To build the tool in a fresh directory with the fewest files:
 
 1. Copy `go.mod` and `go.sum`.
 2. Copy all `.go` files from `cmd/wsdlparser` and `internal/*`.
-3. Copy `visualizations/D3/` (`embed.go` and the SPA files it embeds).
+3. Copy `web/` (its source), then run `npm ci && npm run build` in it to produce `web/build/`.
 4. Run `go build -o wsdlparser ./cmd/wsdlparser`.
 
 This skips `README.md` and `DOCUMENTATION.md` (documentation only) and test files, and still produces a working binary.
@@ -171,21 +164,18 @@ README.md
 DOCUMENTATION.md
 BUILD_MANIFEST.md
 .gitignore
-visualizations/D3/            (the SPA; embedded into the binary by embed.go)
+web/                          (the SPA; web/build is embedded into the binary by embed.go)
   embed.go
-  index.html
-  css/styles.css
-  vendor/d3.min.js
-  vendor/d3.LICENSE
-  js/
-    util.js
-    parser.js
-    model.js
-    descriptions.js
-    charts.js
-    views.js
-    orgs.js
-    app.js
+  package.json
+  package-lock.json
+  vite.config.ts
+  tsconfig.json
+  build/.gitkeep
+  src/
+    app.html, app.css, app.d.ts
+    lib/                        (wsdl/, components/, explorer.svelte.ts, api.ts, ...)
+    routes/                     (+layout.svelte, +page.svelte, and one folder per tab)
+.github/workflows/go.yml
 ```
 
 ## Size reference
