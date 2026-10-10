@@ -9,12 +9,15 @@ enumerated types, and SOAP operations it declares.
 ./build.sh
 ```
 
-`build.sh` first creates the application directory
+`build.sh` first builds the web app (`npm ci && npm run build` in `web/`; needs
+Node 20+), then creates the application directory
 `~/Documents/go-data-discovery/` with `data/` and `wsdl/` inside it, then
 builds `./wsdlparser`. If `~/Documents/go-data-discovery` already exists, the
 build halts with a message and changes nothing; move or remove the directory
 to build again. To build the binary only, without touching the application
-directory, run `go build -o wsdlparser ./cmd/wsdlparser`.
+directory, build `web/` yourself (`cd web && npm ci && npm run build`) and run
+`go build -o wsdlparser ./cmd/wsdlparser`; the Go build embeds `web/build/` and
+fails without it.
 
 If the application directory is later moved, partially deleted, or just
 missing (for example after building only the binary), run
@@ -77,22 +80,20 @@ dump (all sObjects and all their fields).
 
 ## Enterprise WSDL Explorer (browser app)
 
-`visualizations/D3/` contains a single-page app for exploring a WSDL
-visually: object counts by kind, largest objects, a per-object relationship
-graph, searchable operations, and enumerations. There is no build step and no
-server. Open the page in a browser:
+`web/` contains a SvelteKit single-page app for exploring a WSDL visually:
+object counts by kind, largest objects, a per-object relationship graph,
+searchable operations, enumerations, missing descriptions, and the Salesforce
+CLI's authenticated orgs. It is built to static files and embedded in the
+`wsdlparser` binary, so it is opened through the local server below (it does not
+run from `file://`).
 
-```bash
-open visualizations/D3/index.html      # macOS; or just double-click the file
-```
-
-Then drop in either the Enterprise `.wsdl` itself or the JSON written by
+Drop in either the Enterprise `.wsdl` itself or the JSON written by
 `wsdlparser -json`. Everything is parsed locally in the browser; nothing is
 uploaded.
 
 ### Embedded local web server
 
-The same app is embedded in the `wsdlparser` binary:
+Start it with:
 
 ```bash
 ./wsdlparser serve
@@ -108,20 +109,20 @@ for details.
 
 ### Authenticated orgs
 
-Click the **Authenticated orgs** tab to list orgs authorized with the Salesforce CLI. The tab reads from `sf auth list`, with no upload to any server. Actions:
+Click the **Orgs** tab to list orgs authorized with the Salesforce CLI. The tab reads from `sf auth list`, with no upload to any server. Actions:
 
 - **Set default:** The radio button picks the org that the CLI uses as `target-org`.
 - **Remove:** Logout of an org (same as `sf org logout --target-org=<username>`). A confirmation dialog is shown.
 - **Add:** Opens a browser window to log in to a new org (same as `sf org login web`). Optionally set an alias and/or a specific instance URL (e.g. for a sandbox). If only one org is listed, it becomes the default automatically.
 
-**Requirements:** The Salesforce CLI (`sf`) must be installed and on `$PATH`. The tab only works under `wsdlparser serve`; file-based access (`file://`) has no CLI access.
+**Requirements:** The Salesforce CLI (`sf`) must be installed and on `$PATH`. The tab only works under `wsdlparser serve`.
 
 ### Finding custom objects without a description
 
 The WSDL carries no sObject descriptions, so the **Missing descriptions** tab
 gets them elsewhere. Under `wsdlparser serve` its **Get descriptions from
 default org** button runs `sf sobject list --sobject custom` for the default org
-chosen on the Authenticated orgs tab, then reads each object's description from
+chosen on the Orgs tab, then reads each object's description from
 the Tooling API. You can also load an export from the tab (a `.csv` or `.json`
 with a `QualifiedApiName` and a `Description` column). The tab reports how many
 custom objects have a description and how many are missing one, charts the
@@ -135,9 +136,9 @@ sObject metadata), so under `wsdlparser serve`, once a WSDL is loaded, the app
 automatically fetches every object's label from the default org with a single
 global describe call (`sf api request rest /services/data/latest/sobjects`)
 and swaps the API name for the label everywhere an object is shown — charts,
-tables, the object detail view, and search — on the Overview, Objects &
-relationships, and Missing descriptions tabs. If there's no default org, no
-`sf` CLI, or no embedded server (`file://` access), the API name is shown
+tables, the object detail view, and search — on the Overview, Objects,
+and Missing descriptions tabs. If there's no default org, no
+`sf` CLI, or the page is not served by `wsdlparser serve`, the API name is shown
 as-is; nothing in the app blocks on this fetch. See [DOCUMENTATION.md](DOCUMENTATION.md#object-labels).
 
 ### Repairing the application directory

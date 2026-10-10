@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -218,5 +220,22 @@ func TestAcceptsAnyLoopbackLiteralHost(t *testing.T) {
 		if rec := get(h, "/api/files", host); rec.Code != http.StatusForbidden {
 			t.Errorf("host %q: status %d, want 403", host, rec.Code)
 		}
+	}
+}
+
+func TestCSPHashesInlineBootstrapOnly(t *testing.T) {
+	const boot = "{ start(); }"
+	page := `<html><script type="module" src="/a.js"></script><script>` + boot + `</script></html>`
+	h := Handler(t.TempDir(), fstest.MapFS{"index.html": {Data: []byte(page)}})
+	sum := sha256.Sum256([]byte(boot))
+	want := "script-src 'self' 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	got := get(h, "/", "127.0.0.1:1").Header().Get("Content-Security-Policy")
+	if !strings.Contains(got, want) || strings.Contains(got, "script-src 'unsafe") {
+		t.Errorf("CSP %q lacks %q", got, want)
+	}
+	// A page with no inline script gets no script-src beyond default-src 'self'.
+	h = Handler(t.TempDir(), fstest.MapFS{"index.html": {Data: []byte("<h1>spa</h1>")}})
+	if got := get(h, "/", "127.0.0.1:1").Header().Get("Content-Security-Policy"); strings.Contains(got, "script-src") {
+		t.Errorf("unexpected script-src in %q", got)
 	}
 }

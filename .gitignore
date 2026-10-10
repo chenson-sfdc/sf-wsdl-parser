@@ -1,3 +1,5 @@
 /wsdlparser
 .cursor/rules/do-not-edit-these-rules-from-mcp-gateway/
 .windsurf/rules/do-not-edit-these-rules-from-mcp-gateway/
+/web/build/*
+!/web/build/.gitkeep

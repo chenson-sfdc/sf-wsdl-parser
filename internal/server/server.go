@@ -5,6 +5,8 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +22,32 @@ import (
 	"wsdlparser/internal/wsdl"
 )
 
-const csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+const cspBase = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
+var inlineScript = regexp.MustCompile(`(?s)<script(?:\s[^>]*)?>(.*?)</script>`)
+
+// contentSecurityPolicy is cspBase plus a script-src that admits only the
+// inline <script> blocks present in the app's index.html, by SHA-256. The
+// SvelteKit build bootstraps with one such block; hashing it at startup keeps
+// scripts locked to 'self' without 'unsafe-inline', whatever the build emits.
+func contentSecurityPolicy(assets fs.FS) string {
+	page, err := fs.ReadFile(assets, "index.html")
+	if err != nil {
+		return cspBase
+	}
+	var hashes []string
+	for _, m := range inlineScript.FindAllSubmatch(page, -1) {
+		if len(m[1]) == 0 {
+			continue
+		}
+		sum := sha256.Sum256(m[1])
+		hashes = append(hashes, "'sha256-"+base64.StdEncoding.EncodeToString(sum[:])+"'")
+	}
+	if len(hashes) == 0 {
+		return cspBase
+	}
+	return cspBase + "; script-src 'self' " + strings.Join(hashes, " ")
+}
 
 type fileInfo struct {
 	Name string `json:"name"`
@@ -67,10 +95,10 @@ func newHandler(root string, assets fs.FS, sf sfRunner) http.Handler {
 	mux.HandleFunc("POST /api/orgs/descriptions", guarded(s.descriptions))
 	mux.HandleFunc("POST /api/orgs/labels", guarded(s.labels))
 	mux.Handle("GET /", http.FileServerFS(assets))
-	return loopbackOnly(mux)
+	return loopbackOnly(mux, contentSecurityPolicy(assets))
 }
 
-func loopbackOnly(next http.Handler) http.Handler {
+func loopbackOnly(next http.Handler, csp string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
 		if h, _, err := net.SplitHostPort(host); err == nil {
